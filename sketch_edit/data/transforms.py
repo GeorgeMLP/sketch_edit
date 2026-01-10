@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import torch
-from einops import rearrange
 from jaxtyping import Float
 from PIL import Image
 from torchvision import transforms

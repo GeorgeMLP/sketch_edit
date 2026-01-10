@@ -6,8 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from einops import rearrange, reduce
-from jaxtyping import Bool, Float, Int
+from jaxtyping import Bool, Float
 from PIL import Image
 from tqdm import tqdm
 from transformers import (
@@ -81,7 +80,6 @@ class GroundedSegmenter:
             - center: Center point (x, y) of the mask
         """
         image_rgb = image.convert("RGB")
-        image_np = np.array(image_rgb)
 
         # Run Grounding DINO
         dino_inputs = self.dino_processor(
@@ -119,7 +117,7 @@ class GroundedSegmenter:
         # Get the best mask
         mask: Bool[np.ndarray, "H W"] = masks[0][0].numpy()
 
-        # Compute center from mask using einops-style operations
+        # Compute center from mask
         ys, xs = np.where(mask)
         if len(xs) == 0 or len(ys) == 0:
             raise ValueError("Empty mask produced")

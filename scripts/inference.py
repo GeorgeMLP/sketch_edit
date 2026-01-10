@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run inference with sketch+text-guided image editing models."""
 
 from __future__ import annotations

@@ -1,10 +1,8 @@
-#!/usr/bin/env python3
 """Evaluate model predictions against ground truth."""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from sketch_edit.evaluation import Evaluator
 from sketch_edit.utils import get_logger, save_json, setup_logging

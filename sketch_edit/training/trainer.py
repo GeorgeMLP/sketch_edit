@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import torch
-from einops import rearrange
 from jaxtyping import Float, Int
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader

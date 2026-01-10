@@ -5,8 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 import torch
-from einops import rearrange, reduce
-from jaxtyping import Float, UInt8
+from jaxtyping import UInt8
 from PIL import Image
 
 from sketch_edit.utils import get_logger

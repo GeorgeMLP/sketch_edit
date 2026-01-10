@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import torch
-from einops import rearrange
-from jaxtyping import Float, UInt8
 from PIL import Image
 from tqdm import tqdm
 
-from sketch_edit.utils import get_logger, load_json
+from sketch_edit.utils import get_logger
 
 logger = get_logger(__name__)
 

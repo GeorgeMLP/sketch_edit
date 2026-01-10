@@ -10,7 +10,6 @@ from PIL import Image
 from tqdm import tqdm
 
 from sketch_edit.evaluation.metrics import (
-    compute_all_metrics,
     compute_clip_similarity,
     compute_histogram_intersection,
     compute_mse,

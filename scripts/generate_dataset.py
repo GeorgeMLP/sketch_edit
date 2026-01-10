@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate synthetic dataset for sketch+text-guided image editing."""
 
 from __future__ import annotations

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from jaxtyping import Float
 from PIL import Image
 
 from sketch_edit.utils import get_logger

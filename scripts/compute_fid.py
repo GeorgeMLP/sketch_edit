@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Compute FID score between prediction and ground truth directories.
 
 This script uses pytorch-fid to compute the Frechet Inception Distance.

@@ -54,8 +54,11 @@ dev = [
     "ipykernel>=6.0.0",
     "pytest>=8.0.0",
 ]
+bnb = [
+    "bitsandbytes>=0.43.0; sys_platform != 'darwin'",
+]
 all = [
-    "sketch-edit[eval,dev]",
+    "sketch-edit[eval,dev,bnb]",
     "controlnet-aux>=0.0.9",
     "xformers>=0.0.28; sys_platform != 'darwin'",
 ]
