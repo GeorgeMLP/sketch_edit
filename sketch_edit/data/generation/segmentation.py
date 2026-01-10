@@ -90,7 +90,7 @@ class GroundedSegmenter:
         dino_results = self.dino_processor.post_process_grounded_object_detection(
             dino_outputs,
             dino_inputs.input_ids,
-            box_threshold=box_threshold,
+            threshold=box_threshold,
             text_threshold=text_threshold,
             target_sizes=[image_rgb.size[::-1]],  # (H, W)
         )

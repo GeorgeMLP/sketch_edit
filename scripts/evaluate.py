@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log_file",
         type=str,
-        default="evaluate.log",
+        default="logs/evaluate.log",
         help="Log file path.",
     )
 

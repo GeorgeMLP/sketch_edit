@@ -173,7 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log_file",
         type=str,
-        default="train.log",
+        default="logs/train.log",
         help="Log file path.",
     )
 

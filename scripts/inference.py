@@ -136,7 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log_file",
         type=str,
-        default="inference.log",
+        default="logs/inference.log",
         help="Log file path.",
     )
 

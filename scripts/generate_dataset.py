@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--log_file",
         type=str,
-        default="generate_dataset.log",
+        default="logs/generate_dataset.log",
         help="Log file path.",
     )
 
