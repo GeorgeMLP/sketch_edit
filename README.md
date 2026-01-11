@@ -17,7 +17,7 @@ conda create -n sketch_edit python=3.11 -y
 conda activate sketch_edit
 
 # Install PyTorch (adjust CUDA version as needed)
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 
 # Install the package in development mode
 pip install -e ".[all]"

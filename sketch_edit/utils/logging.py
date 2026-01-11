@@ -76,7 +76,7 @@ def get_logger(name: str, log_file: str | Path | None = None) -> logging.Logger:
 
     if not logger.handlers:
         formatter = logging.Formatter(
-            fmt="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            fmt="%(asctime)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
         formatter.converter = _timetz
