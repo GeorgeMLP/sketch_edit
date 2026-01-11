@@ -41,6 +41,8 @@ dependencies = [
     "tqdm>=4.66.0",
     "numpy>=1.24.0,<2.0.0",
     "pytz>=2024.1",
+    "wandb>=0.16.0",
+    "sentry-sdk<2.25.0",
     "omegaconf>=2.3.0",
     "pyyaml>=6.0",
     "albumentations>=0.5.2,<0.6.0",

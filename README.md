@@ -22,7 +22,7 @@ pip install -e ".[all]"
 
 ## Download Pretrained Models
 
-Before generating the dataset, you need to download the required pretrained models (LaMa inpainting model and SAM segmentation model):
+Before generating the dataset, you need to download the required pretrained LaMa inpainting model (~200MB):
 
 ```bash
 cd pretrained_models/
@@ -30,9 +30,25 @@ bash download_models.sh
 cd ..
 ```
 
-This will download:
-- **big-lama**: Large Mask Inpainting model for object removal (~200MB)
-- **sam_vit_h_4b8939.pth**: Segment Anything Model (SAM) for segmentation (~2.5GB)
+## Dataset Management
+
+### Upload/Download Dataset (Wandb)
+
+Upload your dataset to Weights & Biases for collaboration:
+
+```bash
+# Upload dataset
+python scripts/wandb_sync.py \
+    --action upload \
+    --dataset_dir ./dataset \
+    --artifact_name dataset
+
+# Download dataset (automatically regenerates manifest with local paths)
+python scripts/wandb_sync.py \
+    --action download \
+    --dataset_dir ./dataset \
+    --artifact_name dataset:latest
+```
 
 ## Quick Start
 
