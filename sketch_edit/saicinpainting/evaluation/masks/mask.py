@@ -5,12 +5,12 @@ import numpy as np
 from skimage import img_as_ubyte
 from skimage.transform import rescale, resize
 try:
-    from detectron2 import model_zoo
-    from detectron2.config import get_cfg
-    from detectron2.engine import DefaultPredictor
+    from detectron2 import model_zoo  # type: ignore
+    from detectron2.config import get_cfg  # type: ignore
+    from detectron2.engine import DefaultPredictor  # type: ignore
     DETECTRON_INSTALLED = True
 except:
-    print("Detectron v2 is not installed")
+    # Detectron v2 is not needed for inference
     DETECTRON_INSTALLED = False
 
 from .countless.countless2d import zero_corrected_countless
@@ -381,7 +381,7 @@ class SegmentationMask:
             elif self.rigidness_mode is RigidnessMode.rigid:
                 foreground = scene_objects
             else:
-                raise ValueError(f'Unexpected rigidness_mode: {rigidness_mode}')
+                raise ValueError(f'Unexpected rigidness_mode: {self.rigidness_mode}')
 
             masks_params = self._move_mask(mask, foreground)
 

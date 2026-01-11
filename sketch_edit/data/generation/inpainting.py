@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", category=UserWarning, module="lightning_fabric")
 
 import cv2
 import numpy as np
@@ -15,6 +19,9 @@ from tqdm import tqdm
 
 from sketch_edit.saicinpainting.training.trainers import load_checkpoint
 from sketch_edit.utils import get_logger
+
+logging.getLogger("sketch_edit.saicinpainting").setLevel(logging.ERROR)
+logging.getLogger("root").setLevel(logging.WARNING)
 
 logger = get_logger(__name__)
 
@@ -115,7 +122,7 @@ class LamaInpainter:
         self,
         image: Image.Image,
         mask: Image.Image,
-        dilate_kernel_size: int = 30,
+        dilate_kernel_size: int = 15,
         mod: int = 8,
     ) -> Image.Image:
         """

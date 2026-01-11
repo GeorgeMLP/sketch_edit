@@ -74,8 +74,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dilate_kernel_size",
         type=int,
-        default=30,
-        help="Kernel size for mask dilation (default: 15, following Inpaint-Anything). "
+        default=15,
+        help="Kernel size for mask dilation (default: 15). "
              "Set to 0 to disable dilation.",
     )
     parser.add_argument(
