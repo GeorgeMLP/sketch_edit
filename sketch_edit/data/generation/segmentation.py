@@ -67,6 +67,9 @@ class GroundedSegmenter:
         """
         Segment an object in an image based on a text prompt.
 
+        Uses Grounding DINO for object detection (bounding box), then uses
+        SAM with point prompts (center of bbox) for precise segmentation.
+
         Args:
             image: Input image.
             text_prompt: Text description of object to segment (e.g., "tiger").
@@ -81,7 +84,7 @@ class GroundedSegmenter:
         """
         image_rgb = image.convert("RGB")
 
-        # Run Grounding DINO
+        # Run Grounding DINO to detect object and get bounding box
         dino_inputs = self.dino_processor(
             images=image_rgb, text=[[text_prompt]], return_tensors="pt"
         ).to(self.device)
@@ -102,28 +105,48 @@ class GroundedSegmenter:
         box: list[int] = [int(x) for x in dino_results[0]["boxes"][0].tolist()]
         x1, y1, x2, y2 = box
 
-        # Run SAM with the detected bounding box
+        # Calculate center point from bounding box
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        input_points = [[[center_x, center_y]]]  # Shape: [batch, num_points, 2]
+        input_labels = [[1]]  # Shape: [batch, num_points], 1 = foreground point
+
+        # Run SAM with point prompt (instead of bounding box)
         sam_inputs = self.sam_processor(
-            image_rgb, input_boxes=[[[x1, y1, x2, y2]]], return_tensors="pt"
+            image_rgb, 
+            input_points=input_points,
+            input_labels=input_labels,
+            return_tensors="pt"
         ).to(self.device)
 
-        sam_outputs = self.sam_model(**sam_inputs)
+        # Run SAM with multimask_output=True to get 3 mask candidates
+        sam_outputs = self.sam_model(**sam_inputs, multimask_output=True)
+        
+        # Post-process masks
         masks = self.sam_processor.image_processor.post_process_masks(
             sam_outputs.pred_masks.cpu(),
             sam_inputs["original_sizes"].cpu(),
             sam_inputs["reshaped_input_sizes"].cpu(),
         )[0]
 
-        # Get the best mask
-        mask: Bool[np.ndarray, "H W"] = masks[0][0].numpy()
+        # Select the best mask based on IoU prediction scores
+        # masks shape after post_process: [batch (1), num_masks (3), H, W]
+        # iou_scores shape: [batch (1), num_points (1), num_masks (3)]
+        iou_scores = sam_outputs.iou_scores[0][0].cpu().numpy()  # Get scores for first batch, first point: shape [3]
+        best_mask_idx = int(np.argmax(iou_scores))
+        
+        logger.debug(f"SAM IoU scores: {iou_scores}, selected mask {best_mask_idx}")
+        
+        # Get the best mask: masks[0] gives [3, H, W], then select best_mask_idx
+        mask: Bool[np.ndarray, "H W"] = masks[0][best_mask_idx].numpy()
 
-        # Compute center from mask
+        # Compute actual center from the selected mask
         ys, xs = np.where(mask)
         if len(xs) == 0 or len(ys) == 0:
             raise ValueError("Empty mask produced")
 
-        center_x = int(np.mean(xs))
-        center_y = int(np.mean(ys))
+        mask_center_x = int(np.mean(xs))
+        mask_center_y = int(np.mean(ys))
 
         # Convert mask to uint8
         mask_uint8: UInt8[np.ndarray, "H W"] = (mask.astype(np.float32) * 255).astype(np.uint8)
@@ -131,7 +154,7 @@ class GroundedSegmenter:
         return {
             "mask": mask_uint8,
             "bbox": box,
-            "center": (center_x, center_y),
+            "center": (mask_center_x, mask_center_y),
         }
 
     def segment_dataset(
