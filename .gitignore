@@ -209,6 +209,8 @@ __marimo__/
 
 dataset*/
 logs/
+pretrained_models/*.pth
+pretrained_models/big-lama
 checkpoints/
 predictions/
 wandb/

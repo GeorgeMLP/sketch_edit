@@ -16,12 +16,23 @@ This codebase provides tools for:
 conda create -n sketch_edit python=3.11 -y
 conda activate sketch_edit
 
-# Install PyTorch (adjust CUDA version as needed)
-pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-
 # Install the package in development mode
 pip install -e ".[all]"
 ```
+
+## Download Pretrained Models
+
+Before generating the dataset, you need to download the required pretrained models (LaMa inpainting model and SAM segmentation model):
+
+```bash
+cd pretrained_models/
+bash download_models.sh
+cd ..
+```
+
+This will download:
+- **big-lama**: Large Mask Inpainting model for object removal (~200MB)
+- **sam_vit_h_4b8939.pth**: Segment Anything Model (SAM) for segmentation (~2.5GB)
 
 ## Quick Start
 

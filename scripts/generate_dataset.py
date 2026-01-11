@@ -64,12 +64,19 @@ def parse_args() -> argparse.Namespace:
         help="SAM model ID.",
     )
 
-    # Inpainting options
+    # Inpainting options (using LaMa model)
     parser.add_argument(
-        "--inpaint_model_id",
+        "--lama_ckpt_dir",
         type=str,
-        default="runwayml/stable-diffusion-inpainting",
-        help="Inpainting model ID.",
+        default="pretrained_models/big-lama",
+        help="Path to LaMa checkpoint directory (containing config.yaml and models/).",
+    )
+    parser.add_argument(
+        "--dilate_kernel_size",
+        type=int,
+        default=30,
+        help="Kernel size for mask dilation (default: 15, following Inpaint-Anything). "
+             "Set to 0 to disable dilation.",
     )
     parser.add_argument(
         "--use_existing_inpainted",
@@ -153,7 +160,7 @@ def run_segmentation(args: argparse.Namespace, logger) -> None:
 
 
 def run_inpainting(args: argparse.Namespace, logger) -> None:
-    """Remove objects via inpainting."""
+    """Remove objects via LaMa inpainting."""
     output_dir = Path(args.output_dir or args.data_dir) / "inpainted"
 
     if args.use_existing_inpainted:
@@ -163,17 +170,19 @@ def run_inpainting(args: argparse.Namespace, logger) -> None:
         logger.info(f"Copying existing inpainted images from {source_dir}")
         copy_existing_inpainted(source_dir, output_dir)
     else:
-        from sketch_edit.data.generation import ObjectInpainter
+        from sketch_edit.data.generation.inpainting import LamaInpainter
 
         segmentation_dir = Path(args.data_dir) / "segmentation"
         if not segmentation_dir.exists():
             logger.error("Segmentation not found. Run --task segmentation first.")
             return
 
-        logger.info(f"Running inpainting, output to {output_dir}")
+        logger.info(f"Running LaMa inpainting, output to {output_dir}")
+        logger.info(f"LaMa checkpoint: {args.lama_ckpt_dir}")
+        logger.info(f"Mask dilation kernel size: {args.dilate_kernel_size}")
 
-        inpainter = ObjectInpainter(
-            model_id=args.inpaint_model_id,
+        inpainter = LamaInpainter(
+            lama_ckpt_dir=args.lama_ckpt_dir,
             device=args.device,
         )
 
@@ -181,6 +190,7 @@ def run_inpainting(args: argparse.Namespace, logger) -> None:
             data_dir=args.data_dir,
             segmentation_dir=segmentation_dir,
             output_dir=output_dir,
+            dilate_kernel_size=args.dilate_kernel_size,
             skip_existing=args.skip_existing,
         )
 

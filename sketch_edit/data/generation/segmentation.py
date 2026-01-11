@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from jaxtyping import Bool, Float
+from jaxtyping import Bool, UInt8
 from PIL import Image
 from tqdm import tqdm
 from transformers import (
@@ -63,7 +63,7 @@ class GroundedSegmenter:
         text_prompt: str,
         box_threshold: float = 0.4,
         text_threshold: float = 0.3,
-    ) -> dict[str, Float[np.ndarray, "..."] | list[int] | tuple[int, int]]:
+    ) -> dict[str, UInt8[np.ndarray, "H W"] | list[int] | tuple[int, int]]:
         """
         Segment an object in an image based on a text prompt.
 
@@ -126,7 +126,7 @@ class GroundedSegmenter:
         center_y = int(np.mean(ys))
 
         # Convert mask to uint8
-        mask_uint8: Float[np.ndarray, "H W"] = (mask.astype(np.float32) * 255).astype(np.uint8)
+        mask_uint8: UInt8[np.ndarray, "H W"] = (mask.astype(np.float32) * 255).astype(np.uint8)
 
         return {
             "mask": mask_uint8,
