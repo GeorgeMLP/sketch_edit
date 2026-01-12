@@ -37,21 +37,22 @@ def upload_dataset(
     logger.info("Compressing dataset...")
     
     current_dir = Path.cwd()
-    parent_dir = dataset_dir.parent
-    dataset_name = dataset_dir.name
     
-    os.chdir(parent_dir)
+    # Create tarball in a temp location
+    temp_dir = dataset_dir.parent
+    tar_filename = "dataset_temp.tar"
+    compressed_filename = "dataset_temp.tar.bz2"
     
     try:
-        # Create compressed tarball
-        tar_file = f"{dataset_name}.tar"
-        compressed_file = f"{dataset_name}.tar.bz2"
+        # Create tarball of dataset contents (not the directory itself)
+        # This way extraction creates sampled/, inpainted/, etc. directly
+        logger.info(f"Creating tarball: {tar_filename}")
+        os.chdir(dataset_dir)
+        os.system(f"tar -cf ../{tar_filename} .")
         
-        logger.info(f"Creating tarball: {tar_file}")
-        os.system(f"tar -cf {tar_file} {dataset_name}")
-        
-        logger.info(f"Compressing with bzip2: {compressed_file}")
-        os.system(f"pbzip2 -f {tar_file}")  # -f to overwrite if exists
+        logger.info(f"Compressing with bzip2: {compressed_filename}")
+        os.chdir(temp_dir)
+        os.system(f"pbzip2 -f {tar_filename}")  # -f to overwrite if exists
         
         # Initialize wandb
         logger.info("Initializing wandb...")
@@ -71,7 +72,8 @@ def upload_dataset(
             },
         )
         
-        artifact.add_file(compressed_file)
+        compressed_file = temp_dir / compressed_filename
+        artifact.add_file(str(compressed_file))
         logger.info(f"Uploading {artifact.name} to W&B...")
         wandb.log_artifact(artifact)
         
@@ -79,10 +81,10 @@ def upload_dataset(
         
         # Clean up
         logger.info("Cleaning up temporary files...")
-        if Path(compressed_file).exists():
+        if compressed_file.exists():
             os.remove(compressed_file)
-        if Path("wandb").exists():
-            shutil.rmtree("wandb")
+        if (temp_dir / "wandb").exists():
+            shutil.rmtree(temp_dir / "wandb")
             
     finally:
         os.chdir(current_dir)
@@ -97,7 +99,7 @@ def download_dataset(
     Download and extract dataset from Weights & Biases.
     
     Args:
-        output_dir: Directory to extract dataset to (will create 'dataset/' subdirectory).
+        output_dir: Directory to extract dataset to (will contain sampled/, inpainted/, etc.).
         artifact_name: Wandb artifact name (e.g., 'dataset:latest' or 'dataset:v1').
         regenerate_manifest: Whether to regenerate dataset.json with local paths.
     """
@@ -122,27 +124,20 @@ def download_dataset(
         artifact = wandb.use_artifact(artifact_name)
         artifact_dir = artifact.download(str(output_dir))
         
-        # Extract the compressed file
+        # Extract the compressed file directly into output_dir
         logger.info("Extracting dataset...")
         compressed_file = list(Path(artifact_dir).glob("*.tar.bz2"))[0]
         
         logger.info(f"Decompressing {compressed_file.name}...")
         os.system(f"tar -xjf {compressed_file}")
         
-        # Find the extracted dataset directory
-        dataset_dir = output_dir / "dataset"
-        if not dataset_dir.exists():
-            # Look for any directory that was extracted
-            extracted_dirs = [d for d in output_dir.iterdir() if d.is_dir() and d.name != "wandb" and d.name != "artifacts"]
-            if extracted_dirs:
-                dataset_dir = extracted_dirs[0]
-        
+        # The dataset is now directly in output_dir (sampled/, inpainted/, etc.)
         # Regenerate manifest with correct local paths
-        if regenerate_manifest and dataset_dir.exists():
+        if regenerate_manifest:
             logger.info("Regenerating manifest with local paths...")
             create_dataset_manifest(
-                data_dir=dataset_dir,
-                output_file=dataset_dir / "dataset.json",
+                data_dir=output_dir,
+                output_file=output_dir / "dataset.json",
                 validate=True,
             )
             logger.info("Manifest regenerated successfully!")
