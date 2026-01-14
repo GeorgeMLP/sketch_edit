@@ -9,6 +9,8 @@ from pathlib import Path
 warnings.filterwarnings("ignore", category=UserWarning, module="lightning_fabric")
 
 import cv2
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 import torch
 import yaml
@@ -18,7 +20,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from sketch_edit.saicinpainting.training.trainers import load_checkpoint
-from sketch_edit.utils import get_logger
+from sketch_edit.utils import get_logger, load_json
 
 logging.getLogger("sketch_edit.saicinpainting").setLevel(logging.ERROR)
 logging.getLogger("root").setLevel(logging.WARNING)
@@ -47,6 +49,77 @@ def dilate_mask(
     kernel = np.ones((kernel_size, kernel_size), np.uint8)
     dilated = cv2.dilate(mask, kernel, iterations=1)
     return dilated
+
+
+def create_visualization(
+    image: Image.Image,
+    bbox: list[int],
+    point: tuple[int, int],
+    dilated_mask: UInt8[np.ndarray, "H W"],
+) -> Image.Image:
+    """
+    Create visualization showing bounding box, point prompt, and dilated mask.
+    
+    Args:
+        image: Original image.
+        bbox: Bounding box [x1, y1, x2, y2] from Grounding DINO.
+        point: Point prompt (x, y) used for SAM.
+        dilated_mask: Dilated mask used for inpainting.
+    
+    Returns:
+        Visualization image.
+    """
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(np.array(image))
+    
+    # Draw bounding box (green)
+    x1, y1, x2, y2 = bbox
+    rect = patches.Rectangle(
+        (x1, y1), x2 - x1, y2 - y1,
+        linewidth=3, edgecolor='green', facecolor='none',
+        label='DINO Bounding Box'
+    )
+    ax.add_patch(rect)
+    
+    # Draw dilated mask (red overlay)
+    mask_rgba = np.zeros((*dilated_mask.shape, 4))
+    mask_rgba[dilated_mask > 0] = [1, 0, 0, 0.4]  # Red with 40% opacity
+    ax.imshow(mask_rgba, label='Dilated Mask')
+    
+    # Draw point prompt (blue)
+    point_x, point_y = point
+    ax.plot(point_x, point_y, 'bo', markersize=12, label='SAM Point Prompt')
+    ax.plot(point_x, point_y, 'wo', markersize=6)  # White center
+    
+    # Add text annotation for point
+    ax.text(
+        point_x + 10, point_y - 10,
+        f'({point_x}, {point_y})',
+        color='white',
+        fontsize=10,
+        bbox=dict(boxstyle='round', facecolor='blue', alpha=0.7)
+    )
+    
+    # Add legend
+    ax.legend(loc='upper right', fontsize=10)
+    
+    # Remove axis
+    ax.axis('off')
+    plt.tight_layout()
+    
+    # Convert to PIL Image
+    fig.canvas.draw()
+    # Use tobytes instead of deprecated tostring_rgb
+    buf = fig.canvas.buffer_rgba()
+    vis_array = np.asarray(buf)
+    # Convert RGBA to RGB
+    vis_array = vis_array[:, :, :3]
+    vis_image = Image.fromarray(vis_array)
+    
+    plt.close(fig)
+    
+    return vis_image
 
 
 def _pad_tensor_to_modulo(
@@ -213,6 +286,15 @@ class LamaInpainter:
 
         sampled_dir = data_dir / "sampled"
         mask_dir = segmentation_dir / "masks"
+        
+        # Load segmentation results for bbox and point information
+        seg_results_path = segmentation_dir / "segmentation_results.json"
+        seg_results = {}
+        if seg_results_path.exists():
+            seg_results = load_json(seg_results_path)
+            logger.info(f"Loaded segmentation results from {seg_results_path}")
+        else:
+            logger.warning(f"Segmentation results not found: {seg_results_path}")
 
         # Find all sample directories
         sample_ids = sorted([d.name for d in sampled_dir.iterdir() if d.is_dir()])
@@ -237,17 +319,42 @@ class LamaInpainter:
 
             photo_path = photo_files[0]
             output_path = sample_output_dir / photo_path.name.replace("_photo.jpg", "_remove.jpg")
+            vis_path = sample_output_dir / photo_path.name.replace("_photo.jpg", "_visualization.jpg")
 
             try:
                 image = Image.open(photo_path).convert("RGB")
                 mask = Image.open(mask_path).convert("L")
 
+                # Get dilated mask for visualization
+                mask_np = np.array(mask.convert("L"))
+                if dilate_kernel_size > 0:
+                    dilated_mask_np = dilate_mask(mask_np, kernel_size=dilate_kernel_size)
+                else:
+                    dilated_mask_np = mask_np
+
+                # Perform inpainting
                 inpainted = self.inpaint(
                     image, 
                     mask, 
                     dilate_kernel_size=dilate_kernel_size,
                 )
                 inpainted.save(output_path)
+                
+                # Create and save visualization if segmentation results available
+                if sample_id in seg_results:
+                    seg_info = seg_results[sample_id]
+                    bbox = seg_info["bbox"]
+                    center = tuple(seg_info["center"])
+                    
+                    vis_image = create_visualization(
+                        image=image,
+                        bbox=bbox,
+                        point=center,
+                        dilated_mask=dilated_mask_np,
+                    )
+                    vis_image.save(vis_path)
+                else:
+                    logger.debug(f"No segmentation info for {sample_id}, skipping visualization")
 
             except Exception as e:
                 logger.error(f"Failed to inpaint sample {sample_id}: {e}")
