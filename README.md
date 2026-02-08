@@ -205,7 +205,7 @@ dataset/
 │   │   └── ...
 │   └── ...
 ├── splits.json          # Train/val/test split assignments (80/10/10)
-└── manifest.json        # Multi-task manifest with splits
+└── dataset.json         # Multi-task manifest with splits
 ```
 
 ## Editing Tasks

@@ -211,6 +211,8 @@ class InsertAnythingCompositor:
         device: str | torch.device = "cuda",
         dtype: torch.dtype = torch.bfloat16,
         size: tuple[int, int] = (768, 768),
+        enable_cpu_offload: bool = False,
+        enable_vae_slicing: bool = False,
     ):
         """Initialize the compositor with FLUX models and LoRA weights.
 
@@ -219,6 +221,8 @@ class InsertAnythingCompositor:
             device: Device to run models on.
             dtype: Model dtype (bfloat16 recommended).
             size: Processing resolution (default 768x768 as in Insert-Anything).
+            enable_cpu_offload: Enable CPU offloading to reduce VRAM (~10GB vs 24GB).
+            enable_vae_slicing: Enable VAE slicing to reduce memory spikes.
         """
         self.device = torch.device(device)
         self.dtype = dtype
@@ -239,6 +243,16 @@ class InsertAnythingCompositor:
             torch_dtype=dtype,
         ).to(self.device)
 
+        # Apply memory optimizations
+        if enable_cpu_offload:
+            logger.info("Enabling CPU offloading (reduces VRAM to ~10-12GB)")
+            self.fill_pipe.enable_model_cpu_offload()
+            self.redux_pipe.enable_model_cpu_offload()
+        
+        if enable_vae_slicing:
+            logger.info("Enabling VAE slicing (reduces memory spikes)")
+            self.fill_pipe.enable_vae_slicing()
+
         logger.info("Insert-Anything compositor ready")
 
     def composite(
@@ -248,6 +262,7 @@ class InsertAnythingCompositor:
         tar_image: UInt8[np.ndarray, "H W 3"],
         tar_mask: UInt8[np.ndarray, "H W"],
         seed: int = 666,
+        num_inference_steps: int = 10,
     ) -> UInt8[np.ndarray, "H W 3"]:
         """Composite reference object into target scene naturally.
 
@@ -257,6 +272,11 @@ class InsertAnythingCompositor:
             tar_image: Target scene image (RGB, 0-255).
             tar_mask: Binary mask indicating where to place object (0 or 255).
             seed: Random seed for reproducibility.
+            num_inference_steps: Number of denoising steps (default 10).
+                - 50 steps: highest quality, ~40s/sample
+                - 20-25 steps: good quality, ~16-20s/sample (recommended)
+                - 15 steps: acceptable quality, ~12s/sample
+                - 10 steps: lower quality, ~8s/sample
 
         Returns:
             Composited image with reference object naturally inserted (RGB, 0-255).
@@ -323,6 +343,7 @@ class InsertAnythingCompositor:
             height=mask_diptych_pil.size[1],
             width=mask_diptych_pil.size[0],
             max_sequence_length=512,
+            num_inference_steps=num_inference_steps,
             generator=generator,
             prompt_embeds=prompt_embeds,
             pooled_prompt_embeds=pooled_prompt_embeds,

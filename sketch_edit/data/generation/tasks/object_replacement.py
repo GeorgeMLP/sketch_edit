@@ -28,9 +28,28 @@ class ObjectReplacementTask(EditingTask):
     * **Sketch**: sketch of the correct object.
     """
 
-    def __init__(self, seed: int = 42, compositor_seed: int = 666):
+    def __init__(
+        self, 
+        seed: int = 42, 
+        compositor_seed: int = 666,
+        num_inference_steps: int = 10,
+        enable_cpu_offload: bool = False,
+        enable_vae_slicing: bool = False,
+    ):
+        """Initialize the object replacement task.
+        
+        Args:
+            seed: Random seed for sample pairing.
+            compositor_seed: Seed for Insert-Anything generation.
+            num_inference_steps: Number of diffusion steps (10=fast, 50=slow/high-quality).
+            enable_cpu_offload: Use CPU offloading to reduce VRAM (slower, ~10GB vs 24GB).
+            enable_vae_slicing: Enable VAE slicing to reduce memory spikes.
+        """
         self._seed = seed
         self._compositor_seed = compositor_seed
+        self._num_inference_steps = num_inference_steps
+        self._enable_cpu_offload = enable_cpu_offload
+        self._enable_vae_slicing = enable_vae_slicing
 
     @property
     def name(self) -> str:
@@ -82,7 +101,16 @@ class ObjectReplacementTask(EditingTask):
             )
         
         logger.info("Initializing Insert-Anything compositor...")
-        compositor = InsertAnythingCompositor(lora_path=lora_path, device="cuda")
+        logger.info(f"  Inference steps: {self._num_inference_steps}")
+        logger.info(f"  CPU offload: {self._enable_cpu_offload}")
+        logger.info(f"  VAE slicing: {self._enable_vae_slicing}")
+        
+        compositor = InsertAnythingCompositor(
+            lora_path=lora_path,
+            device="cuda",
+            enable_cpu_offload=self._enable_cpu_offload,
+            enable_vae_slicing=self._enable_vae_slicing,
+        )
 
         results: dict[str, dict] = {}
         for sid in tqdm(sample_ids, desc="object_replacement"):
@@ -119,6 +147,7 @@ class ObjectReplacementTask(EditingTask):
                     tar_image=tar_image,
                     tar_mask=tar_mask,
                     seed=self._compositor_seed,
+                    num_inference_steps=self._num_inference_steps,
                 )
 
                 input_path.parent.mkdir(parents=True, exist_ok=True)
