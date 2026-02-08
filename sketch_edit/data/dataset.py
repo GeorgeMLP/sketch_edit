@@ -1,4 +1,4 @@
-"""Dataset classes for sketch-guided image editing."""
+"""Dataset classes for sketch-guided image editing (multi-task, split-aware)."""
 
 from __future__ import annotations
 
@@ -17,84 +17,68 @@ logger = get_logger(__name__)
 
 
 class SketchEditDataset(Dataset):
-    """
-    Dataset for sketch+text-guided image editing.
+    """Multi-task dataset for sketch+text-guided image editing.
 
-    Each sample contains:
-    - original_image: Background image without the target object
-    - sketch_image: Sketch of the object to add
-    - target_image: Ground truth image with the object
-    - edit_text: Natural language instruction for the edit
+    Reads a split-aware manifest with the layout::
+
+        {"metadata": …, "train": [entries…], "val": [entries…], "test": [entries…]}
+
+    Each entry has ``input_image_path``, ``sketch_image_path``,
+    ``target_image_path``, ``edit_text``, ``task``, etc.
     """
 
     def __init__(
         self,
         manifest_path: str | Path,
+        split: str = "train",
+        task: str | None = None,
         tokenizer: PreTrainedTokenizer | None = None,
         image_size: int = 512,
         augment: bool = False,
         max_text_length: int = 77,
     ):
-        """
-        Initialize the dataset.
-
-        Args:
-            manifest_path: Path to JSON manifest file containing data paths.
-            tokenizer: Text tokenizer for encoding instructions.
-            image_size: Size to resize images to.
-            augment: Whether to apply data augmentation.
-            max_text_length: Maximum length for text tokenization.
-        """
         self.manifest_path = Path(manifest_path)
+        self.split = split
         self.tokenizer = tokenizer
         self.image_size = image_size
         self.max_text_length = max_text_length
         self.transform = PairedTransform(image_size=image_size, augment=augment)
 
-        # Load manifest
-        self.data = load_json(self.manifest_path)
-        logger.info(f"Loaded {len(self.data)} samples from {self.manifest_path}")
+        manifest = load_json(self.manifest_path)
+        self.data: list[dict] = manifest[split]
+
+        if task is not None:
+            self.data = [e for e in self.data if e["task"] == task]
+
+        logger.info(
+            f"Loaded {len(self.data)} samples (split={split}"
+            + (f", task={task}" if task else "")
+            + f") from {self.manifest_path}"
+        )
 
     def __len__(self) -> int:
-        """Return dataset size."""
         return len(self.data)
 
-    def __getitem__(self, idx: int) -> dict[str, Float[torch.Tensor, "..."] | Int[torch.Tensor, "..."] | str]:
-        """
-        Get a single sample.
-
-        Args:
-            idx: Sample index.
-
-        Returns:
-            Dictionary containing:
-            - original_image: Tensor (3, H, W) in [0, 1]
-            - sketch_image: Tensor (3, H, W) in [0, 1]
-            - target_image: Tensor (3, H, W) in [0, 1]
-            - input_ids: Token IDs (if tokenizer provided)
-            - attention_mask: Attention mask (if tokenizer provided)
-            - edit_text: Raw text instruction
-            - sample_id: Unique sample identifier
-        """
+    def __getitem__(
+        self, idx: int,
+    ) -> dict[str, Float[torch.Tensor, "..."] | Int[torch.Tensor, "..."] | str]:
         item = self.data[idx]
 
-        # Load images
-        original = Image.open(item["original_image_path"]).convert("RGB")
+        original = Image.open(item["input_image_path"]).convert("RGB")
         sketch = Image.open(item["sketch_image_path"]).convert("RGB")
         target = Image.open(item["target_image_path"]).convert("RGB")
 
-        # Apply transforms
-        original_tensor, sketch_tensor, target_tensor = self.transform(original, sketch, target)
+        original_t, sketch_t, target_t = self.transform(original, sketch, target)
 
-        result: dict[str, Float[torch.Tensor, "..."] | Int[torch.Tensor, "..."] | str] = {
-            "original_image": original_tensor,
-            "sketch_image": sketch_tensor,
-            "target_image": target_tensor,
+        result: dict = {
+            "original_image": original_t,
+            "sketch_image": sketch_t,
+            "target_image": target_t,
             "edit_text": item["edit_text"],
+            "task": item.get("task", ""),
             "sample_id": item.get("id", str(idx)),
         }
 
-        # Tokenize text if tokenizer provided
         if self.tokenizer is not None:
             tokens = self.tokenizer(
                 item["edit_text"],
@@ -114,75 +98,27 @@ def create_dataloaders(
     tokenizer: PreTrainedTokenizer | None = None,
     batch_size: int = 4,
     image_size: int = 512,
-    val_split: float = 0.1,
+    task: str | None = None,
     num_workers: int = 4,
-    seed: int = 42,
 ) -> tuple[DataLoader, DataLoader]:
-    """
-    Create train and validation dataloaders.
-
-    Args:
-        manifest_path: Path to dataset manifest JSON.
-        tokenizer: Text tokenizer.
-        batch_size: Batch size for dataloaders.
-        image_size: Image size for resizing.
-        val_split: Fraction of data for validation.
-        num_workers: Number of dataloader workers.
-        seed: Random seed for reproducibility.
-
-    Returns:
-        Tuple of (train_loader, val_loader).
-    """
-    import numpy as np
-
-    # Create dataset
-    dataset = SketchEditDataset(
-        manifest_path=manifest_path,
-        tokenizer=tokenizer,
-        image_size=image_size,
-        augment=True,
+    """Create train and validation dataloaders from a split-aware manifest."""
+    train_ds = SketchEditDataset(
+        manifest_path, split="train", task=task, tokenizer=tokenizer,
+        image_size=image_size, augment=True,
+    )
+    val_ds = SketchEditDataset(
+        manifest_path, split="val", task=task, tokenizer=tokenizer,
+        image_size=image_size, augment=False,
     )
 
-    # Create validation dataset (no augmentation)
-    val_dataset = SketchEditDataset(
-        manifest_path=manifest_path,
-        tokenizer=tokenizer,
-        image_size=image_size,
-        augment=False,
-    )
-
-    # Split indices
-    dataset_size = len(dataset)
-    indices = list(range(dataset_size))
-
-    np.random.seed(seed)
-    np.random.shuffle(indices)
-
-    val_size = int(val_split * dataset_size)
-    train_indices = indices[val_size:]
-    val_indices = indices[:val_size]
-
-    logger.info(f"Dataset split: {len(train_indices)} train, {len(val_indices)} val")
-
-    # Create samplers
-    train_sampler = torch.utils.data.SubsetRandomSampler(train_indices)
-    val_sampler = torch.utils.data.SubsetRandomSampler(val_indices)
-
-    # Create dataloaders
     train_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        sampler=train_sampler,
-        num_workers=num_workers,
-        pin_memory=True,
+        train_ds, batch_size=batch_size, shuffle=True,
+        num_workers=num_workers, pin_memory=True,
     )
-
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        sampler=val_sampler,
-        num_workers=num_workers,
-        pin_memory=True,
+        val_ds, batch_size=batch_size, shuffle=False,
+        num_workers=num_workers, pin_memory=True,
     )
 
+    logger.info(f"Dataloaders: {len(train_loader)} train batches, {len(val_loader)} val batches")
     return train_loader, val_loader

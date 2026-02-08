@@ -40,7 +40,6 @@ class TrainingConfig:
 
     # Data
     image_size: int = 512
-    val_split: float = 0.1
 
     # Checkpointing
     output_dir: str = "./checkpoints"

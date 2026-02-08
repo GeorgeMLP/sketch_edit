@@ -1,157 +1,76 @@
-"""Generate synthetic dataset for sketch+text-guided image editing."""
+"""Generate the multi-task synthetic dataset for sketch+text-guided image editing."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from sketch_edit.utils import get_logger, setup_logging
+from sketch_edit.utils import get_logger, load_json, save_json, setup_logging
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Generate synthetic dataset for sketch+text-guided image editing.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
-        "--task",
+        "--step",
         type=str,
         required=True,
-        choices=["instructions", "segmentation", "inpainting", "manifest", "all"],
-        help="Task to run: generate instructions, segment objects, inpaint (remove objects), "
-             "create manifest, or all steps.",
+        choices=["segmentation", "generate", "instructions", "manifest", "all"],
+        help="Pipeline step to run.",
     )
+    parser.add_argument("--data_dir", type=str, required=True, help="Root dataset directory.")
+    parser.add_argument("--output_dir", type=str, default=None, help="Override output directory.")
+
+    # Editing-task selection (for 'generate' and 'instructions' steps)
     parser.add_argument(
-        "--data_dir",
+        "--editing_tasks",
         type=str,
-        required=True,
-        help="Root directory containing the dataset.",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
+        nargs="+",
         default=None,
-        help="Output directory. Defaults to data_dir for most tasks.",
-    )
-    parser.add_argument(
-        "--output_file",
-        type=str,
-        default="dataset.json",
-        help="Output manifest file path (for 'manifest' task).",
+        help="Which editing tasks to process (default: all registered tasks).",
     )
 
-    # Instruction generation options
-    parser.add_argument(
-        "--model_id",
-        type=str,
-        default="google/gemma-3-4b-it",
-        help="HuggingFace model ID for instruction generation.",
-    )
+    # Segmentation models
+    parser.add_argument("--dino_model_id", type=str, default="IDEA-Research/grounding-dino-tiny")
+    parser.add_argument("--sam_model_id", type=str, default="facebook/sam-vit-huge")
 
-    # Segmentation options
-    parser.add_argument(
-        "--dino_model_id",
-        type=str,
-        default="IDEA-Research/grounding-dino-tiny",
-        help="Grounding DINO model ID.",
-    )
-    parser.add_argument(
-        "--sam_model_id",
-        type=str,
-        default="facebook/sam-vit-huge",
-        help="SAM model ID.",
-    )
+    # Inpainting model
+    parser.add_argument("--lama_ckpt_dir", type=str, default="pretrained_models/big-lama")
+    parser.add_argument("--dilate_kernel_size", type=int, default=15)
 
-    # Inpainting options (using LaMa model)
-    parser.add_argument(
-        "--lama_ckpt_dir",
-        type=str,
-        default="pretrained_models/big-lama",
-        help="Path to LaMa checkpoint directory (containing config.yaml and models/).",
-    )
-    parser.add_argument(
-        "--dilate_kernel_size",
-        type=int,
-        default=15,
-        help="Kernel size for mask dilation (default: 15). "
-             "Set to 0 to disable dilation.",
-    )
-    parser.add_argument(
-        "--use_existing_inpainted",
-        action="store_true",
-        help="Use existing inpainted images instead of generating new ones.",
-    )
-    parser.add_argument(
-        "--existing_inpainted_dir",
-        type=str,
-        default=None,
-        help="Directory containing existing inpainted images to copy.",
-    )
+    # VLM instruction model
+    parser.add_argument("--model_id", type=str, default="google/gemma-3-4b-it")
 
-    # Common options
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=None,
-        help="Maximum number of samples to process. None for all.",
-    )
-    parser.add_argument(
-        "--skip_existing",
-        action="store_true",
-        default=True,
-        help="Skip samples that already have outputs.",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        help="Device to run models on.",
-    )
-    parser.add_argument(
-        "--log_file",
-        type=str,
-        default="logs/generate_dataset.log",
-        help="Log file path.",
-    )
+    # Manifest / splits
+    parser.add_argument("--output_file", type=str, default="dataset.json")
+    parser.add_argument("--train_ratio", type=float, default=0.8)
+    parser.add_argument("--val_ratio", type=float, default=0.1)
+    parser.add_argument("--seed", type=int, default=42)
+
+    # Common
+    parser.add_argument("--num_samples", type=int, default=None)
+    parser.add_argument("--skip_existing", action="store_true", default=True)
+    parser.add_argument("--no_skip_existing", action="store_false", dest="skip_existing")
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--log_file", type=str, default="logs/generate_dataset.log")
 
     return parser.parse_args()
 
 
-def run_instructions(args: argparse.Namespace, logger) -> None:
-    """Generate editing instructions using VLM."""
-    from sketch_edit.data.generation import InstructionGenerator
-
-    output_dir = Path(args.output_dir or args.data_dir) / "instructions"
-    logger.info(f"Generating instructions to {output_dir}")
-
-    generator = InstructionGenerator(
-        model_id=args.model_id,
-        device=args.device,
-    )
-
-    generator.generate_instructions_batch(
-        data_dir=args.data_dir,
-        output_dir=output_dir,
-        num_samples=args.num_samples,
-        skip_existing=args.skip_existing,
-    )
-
-
 def run_segmentation(args: argparse.Namespace, logger) -> None:
-    """Segment objects using Grounding DINO + SAM."""
     from sketch_edit.data.generation import GroundedSegmenter
 
     output_dir = Path(args.output_dir or args.data_dir) / "segmentation"
-    logger.info(f"Running segmentation, output to {output_dir}")
+    logger.info(f"Running segmentation → {output_dir}")
 
     segmenter = GroundedSegmenter(
         dino_model_id=args.dino_model_id,
         sam_model_id=args.sam_model_id,
         device=args.device,
     )
-
     segmenter.segment_dataset(
         data_dir=args.data_dir,
         output_dir=output_dir,
@@ -160,83 +79,114 @@ def run_segmentation(args: argparse.Namespace, logger) -> None:
     )
 
 
-def run_inpainting(args: argparse.Namespace, logger) -> None:
-    """Remove objects via LaMa inpainting."""
-    output_dir = Path(args.output_dir or args.data_dir) / "inpainted"
+def run_generate(args: argparse.Namespace, logger) -> None:
+    """Generate task-specific input images."""
+    from sketch_edit.data.generation import LamaInpainter, get_task, list_tasks
 
-    if args.use_existing_inpainted:
-        from sketch_edit.data.generation.inpainting import copy_existing_inpainted
+    data_dir = Path(args.data_dir)
+    seg_dir = data_dir / "segmentation"
+    generated_dir = Path(args.output_dir or args.data_dir) / "generated"
 
-        source_dir = args.existing_inpainted_dir or Path(args.data_dir) / "inpainted"
-        logger.info(f"Copying existing inpainted images from {source_dir}")
-        copy_existing_inpainted(source_dir, output_dir)
-    else:
-        from sketch_edit.data.generation.inpainting import LamaInpainter
+    # Which tasks to run
+    task_names = args.editing_tasks or list_tasks()
+    logger.info(f"Generating inputs for tasks: {task_names}")
 
-        segmentation_dir = Path(args.data_dir) / "segmentation"
-        if not segmentation_dir.exists():
-            logger.error("Segmentation not found. Run --task segmentation first.")
-            return
+    # Load segmentation results
+    seg_results_path = seg_dir / "segmentation_results.json"
+    if not seg_results_path.exists():
+        logger.error("Segmentation results not found. Run --step segmentation first.")
+        return
+    seg_results = load_json(seg_results_path)
 
-        logger.info(f"Running LaMa inpainting, output to {output_dir}")
-        logger.info(f"LaMa checkpoint: {args.lama_ckpt_dir}")
-        logger.info(f"Mask dilation kernel size: {args.dilate_kernel_size}")
+    # Collect sample IDs
+    sampled_dir = data_dir / "sampled"
+    sample_ids = sorted(d.name for d in sampled_dir.iterdir() if d.is_dir())
+    if args.num_samples is not None:
+        sample_ids = sample_ids[: args.num_samples]
 
-        inpainter = LamaInpainter(
-            lama_ckpt_dir=args.lama_ckpt_dir,
-            device=args.device,
+    # Only initialize inpainter if at least one task needs it
+    tasks = [get_task(n) for n in task_names]
+    inpainter = None
+    if any(t.requires_inpainter for t in tasks):
+        logger.info("Loading LaMa inpainter (shared across tasks)…")
+        inpainter = LamaInpainter(lama_ckpt_dir=args.lama_ckpt_dir, device=args.device)
+
+    for task in tasks:
+        task_dir = generated_dir / task.name
+        logger.info(f"--- Task: {task.name} ({task.description}) ---")
+
+        results = task.generate_inputs(
+            data_dir=data_dir,
+            segmentation_dir=seg_dir,
+            output_dir=task_dir,
+            inpainter=inpainter,
+            sample_ids=sample_ids,
+            seg_results=seg_results,
+            skip_existing=args.skip_existing,
         )
 
-        inpainter.inpaint_dataset(
-            data_dir=args.data_dir,
-            segmentation_dir=segmentation_dir,
-            output_dir=output_dir,
-            dilate_kernel_size=args.dilate_kernel_size,
+        # Persist metadata so the manifest step can pick it up
+        save_json(results, task_dir / "metadata.json")
+        logger.info(f"  {task.name}: {len(results)} samples → {task_dir}")
+
+
+def run_instructions(args: argparse.Namespace, logger) -> None:
+    """Generate VLM instructions for each task."""
+    from sketch_edit.data.generation import InstructionGenerator, list_tasks
+
+    data_dir = Path(args.data_dir)
+    task_names = args.editing_tasks or list_tasks()
+
+    generator = InstructionGenerator(model_id=args.model_id, device=args.device)
+
+    for task_name in task_names:
+        out_dir = data_dir / "instructions" / task_name
+        logger.info(f"VLM instructions for task '{task_name}' → {out_dir}")
+        generator.generate_instructions_batch(
+            data_dir=data_dir,
+            output_dir=out_dir,
+            task_name=task_name,
+            num_samples=args.num_samples,
             skip_existing=args.skip_existing,
         )
 
 
 def run_manifest(args: argparse.Namespace, logger) -> None:
-    """Create dataset manifest JSON."""
-    from sketch_edit.data.generation import create_dataset_manifest
+    from sketch_edit.data.generation import create_dataset_manifest, list_tasks
 
+    data_dir = Path(args.data_dir)
     output_file = args.output_file
     if not Path(output_file).is_absolute():
-        output_file = Path(args.data_dir) / output_file
+        output_file = data_dir / output_file
 
+    task_names = args.editing_tasks or list_tasks()
     logger.info(f"Creating manifest at {output_file}")
 
     create_dataset_manifest(
-        data_dir=args.data_dir,
+        data_dir=data_dir,
         output_file=output_file,
+        task_names=task_names,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio,
+        seed=args.seed,
         validate=True,
     )
 
 
 def main() -> None:
-    """Main entry point."""
     args = parse_args()
-
-    # Set up logging
     setup_logging(log_file=args.log_file)
     logger = get_logger(__name__)
 
-    logger.info(f"Running task: {args.task}")
-    logger.info(f"Data directory: {args.data_dir}")
+    logger.info(f"Step: {args.step} | Data dir: {args.data_dir}")
 
-    if args.task == "instructions":
-        run_instructions(args, logger)
-    elif args.task == "segmentation":
+    if args.step in ("segmentation", "all"):
         run_segmentation(args, logger)
-    elif args.task == "inpainting":
-        run_inpainting(args, logger)
-    elif args.task == "manifest":
-        run_manifest(args, logger)
-    elif args.task == "all":
-        logger.info("Running all dataset generation steps...")
-        run_segmentation(args, logger)
-        run_inpainting(args, logger)
+    if args.step in ("generate", "all"):
+        run_generate(args, logger)
+    if args.step in ("instructions",):
         run_instructions(args, logger)
+    if args.step in ("manifest", "all"):
         run_manifest(args, logger)
 
     logger.info("Done!")

@@ -1,146 +1,152 @@
-"""Create dataset manifest from directory structure."""
+"""Create a multi-task, split-aware dataset manifest."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from sketch_edit.utils import get_logger, save_json, load_text_lines
+import numpy as np
+
+from sketch_edit.utils import get_logger, load_json, load_text_lines, save_json
 
 logger = get_logger(__name__)
+
+
+def assign_splits(
+    sample_ids: list[str],
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
+) -> dict[str, list[str]]:
+    """Deterministically assign sample IDs to train / val / test splits."""
+    rng = np.random.RandomState(seed)
+    ids = sorted(sample_ids)
+    indices = np.arange(len(ids))
+    rng.shuffle(indices)
+
+    n = len(ids)
+    n_train = int(train_ratio * n)
+    n_val = int(val_ratio * n)
+
+    splits: dict[str, list[str]] = {"train": [], "val": [], "test": []}
+    for i, idx in enumerate(indices):
+        if i < n_train:
+            splits["train"].append(ids[idx])
+        elif i < n_train + n_val:
+            splits["val"].append(ids[idx])
+        else:
+            splits["test"].append(ids[idx])
+
+    for name, sids in splits.items():
+        logger.info(f"  {name}: {len(sids)} samples")
+    return splits
 
 
 def create_dataset_manifest(
     data_dir: str | Path,
     output_file: str | Path,
+    task_names: list[str] | None = None,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
     validate: bool = True,
-) -> list[dict]:
-    """
-    Create a dataset manifest JSON from the directory structure.
+) -> dict:
+    """Build a multi-task, split-aware manifest and write it to *output_file*.
 
-    Expects directory structure:
-    - data_dir/sampled/{id}/*_photo.jpg (ground truth with object)
-    - data_dir/sampled/{id}/*_sketch.png (object sketch)
-    - data_dir/inpainted/{id}/*_remove.jpg (background without object)
-    - data_dir/instructions/{id}.txt (editing instructions)
+    Directory layout assumed::
 
-    Args:
-        data_dir: Root directory containing the dataset.
-        output_file: Path to save the manifest JSON.
-        validate: Whether to validate that all files exist.
+        data_dir/
+            sampled/{id}/*_photo.jpg, *_sketch.png
+            segmentation/segmentation_results.json
+            generated/{task}/{id}/input.jpg
+            generated/{task}/metadata.json
+            instructions/{task}/{id}.txt      (optional VLM instructions)
 
-    Returns:
-        List of dataset entries.
+    Returns the manifest dict ``{"metadata": …, "train": […], "val": […], "test": […]}``.
     """
     data_dir = Path(data_dir)
-    output_file = Path(output_file)
-
     sampled_dir = data_dir / "sampled"
-    inpainted_dir = data_dir / "inpainted"
-    instructions_dir = data_dir / "instructions"
+    generated_dir = data_dir / "generated"
+    seg_results_path = data_dir / "segmentation" / "segmentation_results.json"
 
-    if not sampled_dir.exists():
-        raise FileNotFoundError(f"Sampled directory not found: {sampled_dir}")
+    seg_results = load_json(seg_results_path) if seg_results_path.exists() else {}
 
-    # Find all sample directories
-    sample_ids = sorted([d.name for d in sampled_dir.iterdir() if d.is_dir()])
-    logger.info(f"Found {len(sample_ids)} sample directories")
-
-    dataset = []
-    skipped = 0
-
-    for sample_id in sample_ids:
-        sample_dir = sampled_dir / sample_id
-        inpainted_sample_dir = inpainted_dir / sample_id
-        instruction_file = instructions_dir / f"{sample_id}.txt"
-
-        # Find files
-        photo_files = list(sample_dir.glob("*_photo.jpg")) + list(sample_dir.glob("*_photo.png"))
-        sketch_files = list(sample_dir.glob("*_sketch.png")) + list(sample_dir.glob("*_sketch.jpg"))
-        remove_files = (
-            list(inpainted_sample_dir.glob("*_remove.jpg"))
-            + list(inpainted_sample_dir.glob("*_remove.png"))
-            if inpainted_sample_dir.exists()
+    # Auto-discover tasks when not specified
+    if task_names is None:
+        task_names = (
+            sorted(d.name for d in generated_dir.iterdir() if d.is_dir())
+            if generated_dir.exists()
             else []
         )
+    logger.info(f"Tasks: {task_names}")
 
-        # Validate files exist
-        if validate:
-            if not photo_files:
-                logger.debug(f"Missing photo for sample {sample_id}")
-                skipped += 1
-                continue
-            if not sketch_files:
-                logger.debug(f"Missing sketch for sample {sample_id}")
-                skipped += 1
-                continue
-            if not remove_files:
-                logger.debug(f"Missing inpainted image for sample {sample_id}")
-                skipped += 1
-                continue
-            if not instruction_file.exists():
-                logger.debug(f"Missing instruction for sample {sample_id}")
-                skipped += 1
-                continue
+    # All sample IDs
+    sample_ids = sorted(d.name for d in sampled_dir.iterdir() if d.is_dir())
 
-        # Load instructions
-        try:
-            instructions = load_text_lines(instruction_file)
-        except Exception:
-            instructions = []
+    # Assign splits and persist
+    splits = assign_splits(sample_ids, train_ratio, val_ratio, seed)
+    save_json(splits, data_dir / "splits.json")
 
-        if not instructions:
-            logger.debug(f"Empty instruction for sample {sample_id}")
-            skipped += 1
-            continue
+    manifest: dict = {
+        "metadata": {
+            "num_samples": len(sample_ids),
+            "tasks": task_names,
+            "splits": {k: len(v) for k, v in splits.items()},
+        },
+        "train": [],
+        "val": [],
+        "test": [],
+    }
 
-        # Create entries for each instruction
-        for idx, instruction in enumerate(instructions):
-            entry = {
-                "id": f"{sample_id}_{idx}",
-                "original_image_path": str(remove_files[0].absolute()) if remove_files else "",
-                "sketch_image_path": str(sketch_files[0].absolute()) if sketch_files else "",
-                "target_image_path": str(photo_files[0].absolute()) if photo_files else "",
-                "edit_text": instruction,
-            }
-            dataset.append(entry)
+    for task_name in task_names:
+        task_meta_path = generated_dir / task_name / "metadata.json"
+        task_meta = load_json(task_meta_path) if task_meta_path.exists() else {}
 
-    logger.info(f"Created manifest with {len(dataset)} entries ({skipped} samples skipped)")
+        for split_name, split_ids in splits.items():
+            for sid in split_ids:
+                if sid not in task_meta:
+                    continue
 
-    # Save manifest
-    save_json(dataset, output_file)
+                meta = task_meta[sid]
+                input_path = meta["input_path"]
+                if validate and not Path(input_path).exists():
+                    continue
+
+                sample_dir = sampled_dir / sid
+                photo_files = list(sample_dir.glob("*_photo.jpg"))
+                sketch_files = sorted(sample_dir.glob("*_sketch.png"))
+                if not photo_files or not sketch_files:
+                    continue
+
+                # Prefer VLM instruction when available
+                instruction = meta["instruction"]
+                vlm_path = data_dir / "instructions" / task_name / f"{sid}.txt"
+                if vlm_path.exists():
+                    try:
+                        lines = load_text_lines(vlm_path)
+                        if lines:
+                            instruction = lines[0]
+                    except Exception:
+                        pass
+
+                class_name = seg_results.get(sid, {}).get("class", "")
+
+                for sk_idx, sketch_path in enumerate(sketch_files):
+                    manifest[split_name].append({
+                        "id": f"{sid}_{task_name}_{sk_idx}",
+                        "sample_id": sid,
+                        "task": task_name,
+                        "class_name": class_name,
+                        "input_image_path": str(Path(input_path).absolute()),
+                        "sketch_image_path": str(sketch_path.absolute()),
+                        "target_image_path": str(photo_files[0].absolute()),
+                        "edit_text": instruction,
+                    })
+
+    total = sum(len(manifest[s]) for s in ("train", "val", "test"))
+    logger.info(f"Manifest: {total} entries across {len(task_names)} tasks")
+    for s in ("train", "val", "test"):
+        logger.info(f"  {s}: {len(manifest[s])}")
+
+    save_json(manifest, output_file)
     logger.info(f"Manifest saved to {output_file}")
-
-    return dataset
-
-
-def validate_manifest(manifest_path: str | Path) -> tuple[int, int]:
-    """
-    Validate that all files in a manifest exist.
-
-    Args:
-        manifest_path: Path to manifest JSON file.
-
-    Returns:
-        Tuple of (valid_count, invalid_count).
-    """
-    from sketch_edit.utils import load_json
-
-    manifest = load_json(manifest_path)
-    valid = 0
-    invalid = 0
-
-    for entry in manifest:
-        all_exist = True
-        for key in ["original_image_path", "sketch_image_path", "target_image_path"]:
-            path = entry.get(key, "")
-            if path and not Path(path).exists():
-                logger.warning(f"Missing file: {path}")
-                all_exist = False
-
-        if all_exist:
-            valid += 1
-        else:
-            invalid += 1
-
-    logger.info(f"Validation complete: {valid} valid, {invalid} invalid")
-    return valid, invalid
+    return manifest

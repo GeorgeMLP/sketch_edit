@@ -217,6 +217,8 @@ class Evaluator:
         self,
         manifest_path: str | Path,
         predictions_dir: str | Path,
+        split: str = "test",
+        task: str | None = None,
         output_file: str | Path | None = None,
     ) -> pd.DataFrame:
         """
@@ -225,16 +227,29 @@ class Evaluator:
         Args:
             manifest_path: Path to dataset manifest JSON.
             predictions_dir: Directory containing predicted images.
+            split: Which split to evaluate (train/val/test).
+            task: Optional task filter.
             output_file: Optional path to save results.
 
         Returns:
             DataFrame with per-sample metrics.
         """
-        manifest = load_json(manifest_path)
+        raw = load_json(manifest_path)
+        # Support both split-aware (dict with train/val/test) and flat (list) manifests
+        if isinstance(raw, dict) and split in raw:
+            entries = raw[split]
+        elif isinstance(raw, list):
+            entries = raw
+        else:
+            entries = raw.get("test", [])
+
+        if task is not None:
+            entries = [e for e in entries if e.get("task") == task]
+
         predictions_dir = Path(predictions_dir)
 
         results = []
-        for entry in tqdm(manifest, desc="Evaluating"):
+        for entry in tqdm(entries, desc="Evaluating"):
             sample_id = entry["id"]
             pred_path = predictions_dir / f"{sample_id}.png"
 
