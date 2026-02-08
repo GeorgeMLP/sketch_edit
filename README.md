@@ -1,13 +1,17 @@
 # Sketch-Guided Image Editing
 
-A modular pipeline for synthetic dataset generation, model training, and evaluation for image editing guided by language and sketch.
+A modular pipeline for multi-task synthetic dataset generation, model training, and evaluation for image editing guided by language and sketch.
 
 ## Overview
 
 This codebase provides tools for:
-- **Dataset Generation**: Create synthetic datasets for sketch+text-guided image editing
+- **Multi-Task Dataset Generation**: Create synthetic datasets for sketch+text-guided image editing across multiple tasks
+  - **Object Addition**: Remove object via inpainting; model adds it back
+  - **Orientation Change**: Flip object horizontally; model restores correct orientation  
+  - **Object Replacement**: Swap in foreign object; model replaces with correct one (using Insert-Anything)
 - **Model Training**: Fine-tune diffusion models for multimodal image editing
 - **Evaluation**: Evaluate model predictions using multiple metrics (MSE, CLIP similarity, FID)
+- **Train/Val/Test Splits**: Automatic 80/10/10 dataset splitting for proper evaluation
 
 ## Installation
 
@@ -22,7 +26,7 @@ pip install -e ".[all]"
 
 ## Download Pretrained Models
 
-Before generating the dataset, you need to download the required pretrained LaMa inpainting model (~200MB):
+Before generating the dataset, download the required models:
 
 ```bash
 cd pretrained_models/
@@ -52,81 +56,174 @@ python scripts/wandb_sync.py \
 
 ## Quick Start
 
-### 1. Generate Dataset
+### 1. Generate Multi-Task Dataset
+
+The pipeline now supports multiple editing tasks. Run the full pipeline with:
 
 ```bash
-# Generate editing instructions using Gemma-3
+# Run all steps: segmentation → generate inputs → create manifest
 python scripts/generate_dataset.py \
-    --task instructions \
+    --step all \
     --data_dir ./dataset \
-    --model_id google/gemma-3-4b-it
+    --num_samples 100  # Optional: limit number of samples
 
-# Generate inpainted images (remove objects from source images)
+# Or run individual steps:
+
+# Step 1: Segment objects using Grounding DINO + SAM
 python scripts/generate_dataset.py \
-    --task inpainting \
+    --step segmentation \
     --data_dir ./dataset
 
-# Create dataset manifest (JSON file mapping all data paths)
+# Step 2: Generate task-specific inputs
+# This creates input images for all tasks: object_addition, orientation_change, object_replacement
 python scripts/generate_dataset.py \
-    --task manifest \
+    --step generate \
     --data_dir ./dataset \
-    --output_file dataset.json
+    --editing_tasks object_addition orientation_change object_replacement
+
+# Step 3 (Optional): Generate VLM-based instructions using Gemma-3
+python scripts/generate_dataset.py \
+    --step instructions \
+    --data_dir ./dataset \
+    --editing_tasks object_addition orientation_change object_replacement
+
+# Step 4: Create manifest with train/val/test splits
+python scripts/generate_dataset.py \
+    --step manifest \
+    --data_dir ./dataset \
+    --output_file manifest.json
 ```
 
 ### 2. Train a Model
 
+Train on all tasks or filter by specific task:
+
 ```bash
-# Fine-tune InstructPix2Pix
+# Train on all editing tasks
 python scripts/train.py \
-    --model instruct_pix2pix \
-    --dataset_json dataset.json \
+    --manifest dataset/manifest.json \
+    --model controlnet_inpaint \
     --output_dir ./checkpoints \
     --batch_size 4 \
-    --max_steps 1000 \
-    --learning_rate 5e-5
+    --num_epochs 10
+
+# Train on specific task only
+python scripts/train.py \
+    --manifest dataset/manifest.json \
+    --task object_addition \
+    --model controlnet_inpaint \
+    --output_dir ./checkpoints/object_addition \
+    --batch_size 4 \
+    --num_epochs 10
 ```
 
 ### 3. Evaluate
 
+Evaluate on test split with optional task filtering:
+
 ```bash
-# Evaluate model predictions
+# Evaluate all tasks on test set
 python scripts/evaluate.py \
+    --manifest dataset/manifest.json \
+    --split test \
     --predictions_dir ./predictions \
-    --ground_truth_dir ./ground_truth \
-    --metrics mse clip_sim fid \
+    --metrics mse hist_intersection clip_similarity \
     --output_file results.json
+
+# Evaluate specific task only
+python scripts/evaluate.py \
+    --manifest dataset/manifest.json \
+    --split test \
+    --task object_addition \
+    --predictions_dir ./predictions \
+    --output_file results_obj_add.json
 ```
 
 ### 4. Inference
 
+Run inference with task and split filtering:
+
 ```bash
-# Run inference on a single image
+# Single image inference
 python scripts/inference.py \
-    --model instruct_pix2pix \
-    --checkpoint ./checkpoints/best \
+    --model controlnet_inpaint \
+    --checkpoint ./checkpoints/final \
     --original_image input.jpg \
     --sketch sketch.png \
-    --prompt "add a red apple" \
+    --prompt "Add a red apple to the scene" \
     --output edited.png
+
+# Batch inference on test set
+python scripts/inference.py \
+    --model controlnet_inpaint \
+    --checkpoint ./checkpoints/final \
+    --manifest dataset/manifest.json \
+    --split test \
+    --output_dir ./predictions
+
+# Batch inference on specific task
+python scripts/inference.py \
+    --model controlnet_inpaint \
+    --checkpoint ./checkpoints/final \
+    --manifest dataset/manifest.json \
+    --split test \
+    --task object_replacement \
+    --output_dir ./predictions/obj_replacement
 ```
 
 ## Dataset Structure
 
 ```
 dataset/
-├── sampled/           # Ground truth images + sketches (from Sketchy Database)
+├── sampled/              # Ground truth images + sketches (from Sketchy Database)
 │   ├── 0/
 │   │   ├── apple_n07739125_4340_photo.jpg    # Ground truth with object
 │   │   └── apple_n07739125_4340-1_sketch.png # Object sketch
 │   └── ...
-├── inpainted/         # Images with objects removed (model inputs)
-│   ├── 0/
-│   │   └── apple_n07739125_4340_remove.jpg
+├── segmentation/         # Object segmentation results
+│   ├── masks/
+│   │   ├── 0_mask.png
+│   │   └── ...
+│   └── segmentation_results.json
+├── generated/            # Task-specific generated inputs
+│   ├── object_addition/
+│   │   ├── 0/
+│   │   │   └── input.jpg  # Background with object removed
+│   │   ├── metadata.json
+│   │   └── ...
+│   ├── orientation_change/
+│   │   ├── 0/
+│   │   │   └── input.jpg  # Image with flipped object
+│   │   └── ...
+│   └── object_replacement/
+│       ├── 0/
+│       │   └── input.jpg  # Image with foreign object inserted
+│       └── ...
+├── instructions/         # Optional VLM-generated instructions
+│   ├── object_addition/
+│   │   ├── 0.txt
+│   │   └── ...
 │   └── ...
-└── instructions/      # Text editing instructions
-    ├── 0.txt
-    └── ...
+├── splits.json          # Train/val/test split assignments (80/10/10)
+└── manifest.json        # Multi-task manifest with splits
 ```
+
+## Editing Tasks
+
+| Task | Description | Implementation |
+|------|-------------|----------------|
+| **Object Addition** | Remove object via LaMa inpainting; model must add it back | Standard approach |
+| **Orientation Change** | Flip object horizontally; model must restore correct orientation | Mask-based transformation |
+| **Object Replacement** | Insert foreign object from different class; model must replace with correct one | **Insert-Anything (FLUX-based)** for natural composition |
+
+### Adding New Tasks
+
+To add a new editing task:
+
+1. Create a new class in `sketch_edit/data/generation/tasks/` inheriting from `EditingTask`
+2. Implement `name`, `description`, and `generate_inputs()` method
+3. Register it in `sketch_edit/data/generation/tasks/__init__.py`
+4. The task will automatically be available in the pipeline
 
 ## Supported Models
 

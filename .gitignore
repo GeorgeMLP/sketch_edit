@@ -211,6 +211,7 @@ dataset*/
 logs/
 pretrained_models/*.pth
 pretrained_models/big-lama
+pretrained_models/*.safetensors
 checkpoints/
 predictions/
 wandb/

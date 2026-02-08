@@ -24,7 +24,7 @@ def upload_dataset(
     Upload dataset to Weights & Biases.
     
     Args:
-        dataset_dir: Path to dataset directory (contains sampled/, inpainted/, instructions/).
+        dataset_dir: Path to dataset directory (contains sampled/, segmentation/, generated/, instructions/).
         artifact_name: Name for the wandb artifact.
         description: Description for the artifact.
     """
@@ -45,7 +45,7 @@ def upload_dataset(
     
     try:
         # Create tarball of dataset contents (not the directory itself)
-        # This way extraction creates sampled/, inpainted/, etc. directly
+        # This way extraction creates sampled/, segmentation/, generated/, etc. directly
         logger.info(f"Creating tarball: {tar_filename}")
         os.chdir(dataset_dir)
         os.system(f"tar -cf ../{tar_filename} .")
@@ -99,7 +99,7 @@ def download_dataset(
     Download and extract dataset from Weights & Biases.
     
     Args:
-        output_dir: Directory to extract dataset to (will contain sampled/, inpainted/, etc.).
+        output_dir: Directory to extract dataset to (will contain sampled/, segmentation/, generated/, etc.).
         artifact_name: Wandb artifact name (e.g., 'dataset:latest' or 'dataset:v1').
         regenerate_manifest: Whether to regenerate dataset.json with local paths.
     """
@@ -131,7 +131,7 @@ def download_dataset(
         logger.info(f"Decompressing {compressed_file.name}...")
         os.system(f"tar -xjf {compressed_file}")
         
-        # The dataset is now directly in output_dir (sampled/, inpainted/, etc.)
+        # The dataset is now directly in output_dir (sampled/, segmentation/, generated/, etc.)
         # Regenerate manifest with correct local paths
         if regenerate_manifest:
             logger.info("Regenerating manifest with local paths...")

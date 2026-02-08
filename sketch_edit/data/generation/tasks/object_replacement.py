@@ -6,11 +6,11 @@ import random
 from collections import defaultdict
 from pathlib import Path
 
-import cv2
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
+from sketch_edit.data.generation.insert_anything_utils import InsertAnythingCompositor
 from sketch_edit.data.generation.tasks.base import EditingTask
 from sketch_edit.utils import get_logger
 
@@ -20,13 +20,17 @@ logger = get_logger(__name__)
 class ObjectReplacementTask(EditingTask):
     """Paste a foreign object over the original; the model must replace it back.
 
+    Uses Insert-Anything (FLUX-based diffusion) for natural object composition
+    with proper lighting, shadows, and perspective.
+
     * **Input** : image with a foreign object from a different class.
     * **Target**: original photo with the correct object.
     * **Sketch**: sketch of the correct object.
     """
 
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, compositor_seed: int = 666):
         self._seed = seed
+        self._compositor_seed = compositor_seed
 
     @property
     def name(self) -> str:
@@ -35,13 +39,15 @@ class ObjectReplacementTask(EditingTask):
     @property
     def description(self) -> str:
         return "Replace a foreign object with the correct one using sketch guidance"
+    
+    @property
+    def requires_inpainter(self) -> bool:
+        return False
 
     # ------------------------------------------------------------------
 
     def generate_inputs(self, data_dir, segmentation_dir, output_dir, inpainter,
                         sample_ids, seg_results, skip_existing=True):
-        assert inpainter is not None, "ObjectReplacementTask requires an inpainter"
-
         sampled_dir = Path(data_dir) / "sampled"
         mask_dir = Path(segmentation_dir) / "masks"
         output_dir = Path(output_dir)
@@ -67,6 +73,17 @@ class ObjectReplacementTask(EditingTask):
             repl_cls = rng.choice(other)
             pairings[sid] = rng.choice(class_to_sids[repl_cls])
 
+        # Initialize Insert-Anything compositor (shared across all samples)
+        lora_path = Path("pretrained_models/20250321_steps5000_pytorch_lora_weights.safetensors")
+        if not lora_path.exists():
+            raise FileNotFoundError(
+                f"Insert-Anything LoRA not found: {lora_path}\n"
+                "Please download from https://huggingface.co/WensongSong/Insert-Anything"
+            )
+        
+        logger.info("Initializing Insert-Anything compositor...")
+        compositor = InsertAnythingCompositor(lora_path=lora_path, device="cuda")
+
         results: dict[str, dict] = {}
         for sid in tqdm(sample_ids, desc="object_replacement"):
             input_path = output_dir / sid / "input.jpg"
@@ -90,19 +107,22 @@ class ObjectReplacementTask(EditingTask):
                 continue
 
             try:
-                image = Image.open(photo_files[0]).convert("RGB")
-                mask = Image.open(mask_path).convert("L")
-                repl_image = Image.open(repl_photos[0]).convert("RGB")
-                repl_mask = Image.open(repl_mask_path).convert("L")
+                tar_image = np.array(Image.open(photo_files[0]).convert("RGB"))
+                tar_mask = np.array(Image.open(mask_path).convert("L"))
+                ref_image = np.array(Image.open(repl_photos[0]).convert("RGB"))
+                ref_mask = np.array(Image.open(repl_mask_path).convert("L"))
 
-                composite = self._replace_object(
-                    image, mask, seg_results[sid]["bbox"],
-                    repl_image, repl_mask, seg_results[repl_sid]["bbox"],
-                    inpainter,
+                # Use Insert-Anything for natural composition
+                composite = compositor.composite(
+                    ref_image=ref_image,
+                    ref_mask=ref_mask,
+                    tar_image=tar_image,
+                    tar_mask=tar_mask,
+                    seed=self._compositor_seed,
                 )
 
                 input_path.parent.mkdir(parents=True, exist_ok=True)
-                composite.save(input_path)
+                Image.fromarray(composite).save(input_path)
 
                 results[sid] = self._meta(sid, repl_sid, input_path, seg_results)
             except Exception as e:
@@ -111,50 +131,6 @@ class ObjectReplacementTask(EditingTask):
         return results
 
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _replace_object(
-        target_img: Image.Image,
-        target_mask: Image.Image,
-        target_bbox: list[int],
-        repl_img: Image.Image,
-        repl_mask: Image.Image,
-        repl_bbox: list[int],
-        inpainter,
-    ) -> Image.Image:
-        """Paste *repl* object over *target* object region."""
-        background = inpainter.inpaint(target_img, target_mask)
-        bg_np = np.array(background)
-
-        # Crop replacement object
-        repl_np = np.array(repl_img)
-        repl_m = np.array(repl_mask)
-        rx1, ry1, rx2, ry2 = repl_bbox
-        rx1, ry1 = max(0, rx1), max(0, ry1)
-        rx2 = min(repl_np.shape[1], rx2)
-        ry2 = min(repl_np.shape[0], ry2)
-        crop_obj = repl_np[ry1:ry2, rx1:rx2]
-        crop_mask = repl_m[ry1:ry2, rx1:rx2]
-        if crop_obj.size == 0:
-            raise ValueError("Empty crop for replacement object")
-
-        # Resize to fit target bbox
-        tx1, ty1, tx2, ty2 = target_bbox
-        tx1, ty1 = max(0, tx1), max(0, ty1)
-        tx2 = min(bg_np.shape[1], tx2)
-        ty2 = min(bg_np.shape[0], ty2)
-        tw, th = tx2 - tx1, ty2 - ty1
-        if tw <= 0 or th <= 0:
-            raise ValueError("Invalid target bounding box")
-
-        resized_obj = cv2.resize(crop_obj, (tw, th), interpolation=cv2.INTER_LINEAR)
-        resized_mask = cv2.resize(crop_mask, (tw, th), interpolation=cv2.INTER_NEAREST)
-
-        result = bg_np.copy()
-        region = result[ty1:ty2, tx1:tx2]
-        region[resized_mask > 128] = resized_obj[resized_mask > 128]
-        result[ty1:ty2, tx1:tx2] = region
-        return Image.fromarray(result)
 
     @staticmethod
     def _meta(sid, repl_sid, input_path, seg_results):
