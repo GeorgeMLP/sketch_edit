@@ -156,6 +156,7 @@ def run_segmentation(args: argparse.Namespace, logger) -> None:
         data_dir=args.data_dir,
         output_dir=output_dir,
         skip_existing=args.skip_existing,
+        num_samples=args.num_samples,
     )
 
 

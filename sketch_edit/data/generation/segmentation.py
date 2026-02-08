@@ -68,7 +68,7 @@ class GroundedSegmenter:
         Segment an object in an image based on a text prompt.
 
         Uses Grounding DINO for object detection (bounding box), then uses
-        SAM with point prompts (center of bbox) for precise segmentation.
+        SAM with bounding box prompts for precise segmentation.
 
         Args:
             image: Input image.
@@ -105,18 +105,16 @@ class GroundedSegmenter:
         box: list[int] = [int(x) for x in dino_results[0]["boxes"][0].tolist()]
         x1, y1, x2, y2 = box
 
-        # Calculate center point from bounding box
-        center_x = (x1 + x2) // 2
-        center_y = (y1 + y2) // 2
-        input_points = [[[center_x, center_y]]]  # Shape: [batch, num_points, 2]
-        input_labels = [[1]]  # Shape: [batch, num_points], 1 = foreground point
+        # Use bounding box directly as prompt to SAM
+        # SAM expects boxes in format [x_min, y_min, x_max, y_max]
+        # Nested structure: [[[box]]] for single image, single box
+        input_boxes = [[[box]]]
 
-        # Run SAM with point prompt (instead of bounding box)
+        # Run SAM with bounding box prompt
         sam_inputs = self.sam_processor(
             image_rgb, 
-            input_points=input_points,
-            input_labels=input_labels,
-            return_tensors="pt"
+            input_boxes=input_boxes,
+            return_tensors="pt",
         ).to(self.device)
 
         # Run SAM with multimask_output=True to get 3 mask candidates
@@ -127,18 +125,18 @@ class GroundedSegmenter:
             sam_outputs.pred_masks.cpu(),
             sam_inputs["original_sizes"].cpu(),
             sam_inputs["reshaped_input_sizes"].cpu(),
-        )[0]
+        )
 
         # Select the best mask based on IoU prediction scores
-        # masks shape after post_process: [batch (1), num_masks (3), H, W]
-        # iou_scores shape: [batch (1), num_points (1), num_masks (3)]
-        iou_scores = sam_outputs.iou_scores[0][0].cpu().numpy()  # Get scores for first batch, first point: shape [3]
+        # masks structure: [batch][num_prompts][num_masks, H, W]
+        # iou_scores shape: [batch, num_prompts, num_masks]
+        iou_scores = sam_outputs.iou_scores[0][0].cpu().numpy()  # Get scores for first batch, first prompt
         best_mask_idx = int(np.argmax(iou_scores))
         
         logger.debug(f"SAM IoU scores: {iou_scores}, selected mask {best_mask_idx}")
         
-        # Get the best mask: masks[0] gives [3, H, W], then select best_mask_idx
-        mask: Bool[np.ndarray, "H W"] = masks[0][best_mask_idx].numpy()
+        # Extract the best mask: masks[0][0] gives [num_masks, H, W]
+        mask: Bool[np.ndarray, "H W"] = masks[0][0][best_mask_idx].numpy()
 
         # Compute actual center from the selected mask
         ys, xs = np.where(mask)
@@ -163,6 +161,7 @@ class GroundedSegmenter:
         output_dir: str | Path,
         results_file: str = "segmentation_results.json",
         skip_existing: bool = True,
+        num_samples: int | None = None,
     ) -> None:
         """
         Segment objects in all images in a dataset directory.
@@ -177,6 +176,7 @@ class GroundedSegmenter:
             output_dir: Directory to save masks and results.
             results_file: Name of JSON file to save results.
             skip_existing: Skip samples that already have masks.
+            num_samples: Maximum number of samples to process. None for all.
         """
         data_dir = Path(data_dir)
         output_dir = Path(output_dir)
@@ -195,6 +195,11 @@ class GroundedSegmenter:
 
         # Find all sample directories
         sample_ids = sorted([d.name for d in sampled_dir.iterdir() if d.is_dir()])
+        
+        # Limit to num_samples if specified
+        if num_samples is not None:
+            sample_ids = sample_ids[:num_samples]
+        
         logger.info(f"Processing {len(sample_ids)} samples")
 
         for sample_id in tqdm(sample_ids, desc="Segmenting objects"):
