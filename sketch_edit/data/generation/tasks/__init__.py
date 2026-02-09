@@ -2,6 +2,7 @@
 
 from sketch_edit.data.generation.tasks.base import EditingTask
 from sketch_edit.data.generation.tasks.object_addition import ObjectAdditionTask
+from sketch_edit.data.generation.tasks.object_completion import ObjectCompletionTask
 from sketch_edit.data.generation.tasks.object_replacement import ObjectReplacementTask
 from sketch_edit.data.generation.tasks.orientation_change import OrientationChangeTask
 
@@ -9,6 +10,7 @@ TASK_REGISTRY: dict[str, type[EditingTask]] = {
     "object_addition": ObjectAdditionTask,
     "orientation_change": OrientationChangeTask,
     "object_replacement": ObjectReplacementTask,
+    "object_completion": ObjectCompletionTask,
 }
 
 
@@ -28,6 +30,7 @@ def list_tasks() -> list[str]:
 __all__ = [
     "EditingTask",
     "ObjectAdditionTask",
+    "ObjectCompletionTask",
     "OrientationChangeTask",
     "ObjectReplacementTask",
     "TASK_REGISTRY",

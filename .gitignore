@@ -212,6 +212,7 @@ logs/
 pretrained_models/*.pth
 pretrained_models/big-lama
 pretrained_models/*.safetensors
+pretrained_models/*.pt
 checkpoints/
 predictions/
 wandb/

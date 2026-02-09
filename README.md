@@ -9,6 +9,7 @@ This codebase provides tools for:
   - **Object Addition**: Remove object via inpainting; model adds it back
   - **Orientation Change**: Flip object horizontally; model restores correct orientation  
   - **Object Replacement**: Swap in foreign object; model replaces with correct one (using Insert-Anything)
+  - **Object Completion**: Remove part of object at random granularity; model completes it (using UnSAMv2)
 - **Model Training**: Fine-tune diffusion models for multimodal image editing
 - **Evaluation**: Evaluate model predictions using multiple metrics (MSE, CLIP similarity, FID)
 - **Train/Val/Test Splits**: Automatic 80/10/10 dataset splitting for proper evaluation
@@ -75,17 +76,17 @@ python scripts/generate_dataset.py \
     --data_dir ./dataset
 
 # Step 2: Generate task-specific inputs
-# This creates input images for all tasks: object_addition, orientation_change, object_replacement
+# This creates input images for all tasks: object_addition, orientation_change, object_replacement, object_completion
 python scripts/generate_dataset.py \
     --step generate \
     --data_dir ./dataset \
-    --editing_tasks object_addition orientation_change object_replacement
+    --editing_tasks object_addition orientation_change object_replacement object_completion
 
 # Step 3 (Optional): Generate VLM-based instructions using Gemma-3
 python scripts/generate_dataset.py \
     --step instructions \
     --data_dir ./dataset \
-    --editing_tasks object_addition orientation_change object_replacement
+    --editing_tasks object_addition orientation_change object_replacement object_completion
 
 # Step 4: Create manifest with train/val/test splits
 python scripts/generate_dataset.py \
@@ -195,9 +196,13 @@ dataset/
 │   │   ├── 0/
 │   │   │   └── input.jpg  # Image with flipped object
 │   │   └── ...
-│   └── object_replacement/
+│   ├── object_replacement/
+│   │   ├── 0/
+│   │   │   └── input.jpg  # Image with foreign object inserted
+│   │   └── ...
+│   └── object_completion/
 │       ├── 0/
-│       │   └── input.jpg  # Image with foreign object inserted
+│       │   └── input.jpg  # Image with partial object removed
 │       └── ...
 ├── instructions/         # Optional VLM-generated instructions
 │   ├── object_addition/
@@ -215,6 +220,9 @@ dataset/
 | **Object Addition** | Remove object via LaMa inpainting; model must add it back | Standard approach |
 | **Orientation Change** | Flip object horizontally; model must restore correct orientation | Mask-based transformation |
 | **Object Replacement** | Insert foreign object from different class; model must replace with correct one | **Insert-Anything (FLUX-based)** for natural composition |
+| **Object Completion** | Remove part of object at random granularity; model must complete it | **UnSAMv2+** for granularity-aware partial segmentation |
+
+**Note**: Object completion uses UnSAMv2+ by default (better performance than UnSAMv2). The checkpoint is loaded from `pretrained_models/unsamv2_plus_ckpt.pt`.
 
 ### Adding New Tasks
 
