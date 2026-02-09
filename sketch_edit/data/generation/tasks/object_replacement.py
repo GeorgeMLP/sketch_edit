@@ -58,15 +58,13 @@ class ObjectReplacementTask(EditingTask):
     @property
     def description(self) -> str:
         return "Replace a foreign object with the correct one using sketch guidance"
-    
-    @property
-    def requires_inpainter(self) -> bool:
-        return False
 
     # ------------------------------------------------------------------
 
     def generate_inputs(self, data_dir, segmentation_dir, output_dir, inpainter,
                         sample_ids, seg_results, skip_existing=True):
+        assert inpainter is not None, "ObjectReplacementTask requires an inpainter"
+        
         sampled_dir = Path(data_dir) / "sampled"
         mask_dir = Path(segmentation_dir) / "masks"
         output_dir = Path(output_dir)
@@ -140,11 +138,17 @@ class ObjectReplacementTask(EditingTask):
                 ref_image = np.array(Image.open(repl_photos[0]).convert("RGB"))
                 ref_mask = np.array(Image.open(repl_mask_path).convert("L"))
 
-                # Use Insert-Anything for natural composition
+                # Step 1: Remove original object from target image using inpainting
+                tar_image_pil = Image.fromarray(tar_image)
+                tar_mask_pil = Image.fromarray(tar_mask)
+                clean_background = inpainter.inpaint(tar_image_pil, tar_mask_pil)
+                clean_background_np = np.array(clean_background)
+
+                # Step 2: Use Insert-Anything to naturally composite replacement onto clean background
                 composite = compositor.composite(
                     ref_image=ref_image,
                     ref_mask=ref_mask,
-                    tar_image=tar_image,
+                    tar_image=clean_background_np,
                     tar_mask=tar_mask,
                     seed=self._compositor_seed,
                     num_inference_steps=self._num_inference_steps,
