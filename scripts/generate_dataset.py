@@ -184,7 +184,7 @@ def main() -> None:
         run_segmentation(args, logger)
     if args.step in ("generate", "all"):
         run_generate(args, logger)
-    if args.step in ("instructions",):
+    if args.step in ("instructions", "all"):
         run_instructions(args, logger)
     if args.step in ("manifest", "all"):
         run_manifest(args, logger)
