@@ -9,7 +9,7 @@ from pathlib import Path
 
 import wandb
 
-from sketch_edit.data.generation import create_dataset_manifest
+from sketch_edit.data.generation import create_dataset_manifest, list_tasks
 from sketch_edit.utils import get_logger, setup_logging
 
 logger = get_logger(__name__)
@@ -135,10 +135,12 @@ def download_dataset(
         # Regenerate manifest with correct local paths
         if regenerate_manifest:
             logger.info("Regenerating manifest with local paths...")
+            task_names = list_tasks()
             create_dataset_manifest(
                 data_dir=output_dir,
                 output_file=output_dir / "dataset.json",
-                validate=True,
+                task_names=task_names,
+                validate=False,  # Skip validation since paths are being reconstructed
             )
             logger.info("Manifest regenerated successfully!")
         

@@ -10,18 +10,20 @@ from PIL import Image
 from tqdm import tqdm
 from transformers import AutoProcessor, Gemma3ForConditionalGeneration
 
-from sketch_edit.utils import get_logger, load_text_lines, save_text_lines
+from sketch_edit.utils import get_logger, load_json, load_text_lines, save_text_lines
 
 logger = get_logger(__name__)
 
-INSTRUCTION_PROMPT = (
+INSTRUCTION_PROMPT_TEMPLATE = (
     "We are building a dataset for image editing. Given a pair of images "
     "(a source image and a target image), please generate a detailed natural "
     "language instruction that describes how to edit the first image to "
-    "transform it into the second image. Generate the instruction on one line "
-    "and do not output anything other than the instruction.\n\n"
-    "The source and target images are given as follows. Make sure your "
-    "instructions accurately describe their differences.\n"
+    "transform it into the second image.\n\n"
+    "Task context: {task_context}\n\n"
+    "Given this context, please generate a specific instruction that describes "
+    "how to edit the first image to match the second image. Generate the "
+    "instruction on one line and do not output anything other than the instruction.\n\n"
+    "The source and target images are given as follows:\n"
 )
 
 
@@ -51,15 +53,28 @@ class InstructionGenerator:
         self,
         source_image: Image.Image,
         target_image: Image.Image,
+        task_context: str = "",
         max_new_tokens: int = 500,
     ) -> str:
-        """Generate an editing instruction for a source→target image pair."""
+        """Generate an editing instruction for a source→target image pair.
+        
+        Args:
+            source_image: Input image (with edits to be made).
+            target_image: Target image (desired result).
+            task_context: Context about the editing task (e.g., "Replace the turtle with an apple").
+            max_new_tokens: Maximum tokens to generate.
+            
+        Returns:
+            Generated instruction string.
+        """
+        prompt = INSTRUCTION_PROMPT_TEMPLATE.format(task_context=task_context)
+        
         messages = [
             {"role": "system", "content": [{"type": "text", "text": "You are a helpful assistant."}]},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": INSTRUCTION_PROMPT},
+                    {"type": "text", "text": prompt},
                     {"type": "image", "image": source_image},
                     {"type": "image", "image": target_image},
                 ],
@@ -87,6 +102,7 @@ class InstructionGenerator:
 
         Reads generated inputs from ``data_dir/generated/{task_name}/{id}/input.jpg``
         and original photos from ``data_dir/sampled/{id}/*_photo.jpg``.
+        Also loads task metadata to provide context to the VLM about the editing operation.
         """
         data_dir = Path(data_dir)
         output_dir = Path(output_dir)
@@ -98,6 +114,10 @@ class InstructionGenerator:
         if not generated_dir.exists():
             logger.warning(f"No generated inputs for task '{task_name}'")
             return
+
+        # Load task metadata to get editing context for each sample
+        task_meta_path = generated_dir / "metadata.json"
+        task_meta = load_json(task_meta_path) if task_meta_path.exists() else {}
 
         sample_ids = sorted([d.name for d in generated_dir.iterdir() if d.is_dir()])
         if num_samples is not None:
@@ -118,7 +138,13 @@ class InstructionGenerator:
             try:
                 source = Image.open(input_path).convert("RGB")
                 target = Image.open(photo_files[0]).convert("RGB")
-                instruction = self.generate_instruction(source, target)
+                
+                # Get task-specific context from metadata
+                task_context = ""
+                if sid in task_meta and "instruction" in task_meta[sid]:
+                    task_context = task_meta[sid]["instruction"]
+                
+                instruction = self.generate_instruction(source, target, task_context=task_context)
                 save_text_lines([instruction], out_path)
             except Exception as e:
                 logger.error(f"Instruction generation failed for {sid}: {e}")
