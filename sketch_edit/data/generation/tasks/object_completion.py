@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -122,13 +123,26 @@ class ObjectCompletionTask(EditingTask):
                     granularity=granularity,
                 )
 
-                # Inpaint the partial region
-                partial_mask_pil = Image.fromarray((partial_mask * 255).astype(np.uint8))
-                inpainted = inpainter.inpaint(image, partial_mask_pil)
+                # Dilate the partial mask to create a slightly larger region
+                kernel = np.ones((15, 15), np.uint8)
+                dilated_mask = cv2.dilate(partial_mask.astype(np.uint8), kernel, iterations=1)
+
+                # Get clean background from object_addition task (LaMa removed whole object)
+                bg_path = data_dir / "generated" / "object_addition" / sid / "input.jpg"
+                if not bg_path.exists():
+                    logger.warning(f"Background not found for {sid}, skipping")
+                    continue
+                
+                background = np.array(Image.open(bg_path).convert("RGB"))
+
+                # Fill the dilated partial mask region with background
+                result = image_np.copy()
+                mask_bool = dilated_mask > 0
+                result[mask_bool] = background[mask_bool]
 
                 # Save results
                 input_path.parent.mkdir(parents=True, exist_ok=True)
-                inpainted.save(input_path)
+                Image.fromarray(result).save(input_path)
 
                 results[sid] = {
                     "input_path": str(input_path),

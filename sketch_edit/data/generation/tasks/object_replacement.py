@@ -27,6 +27,167 @@ class ObjectReplacementTask(EditingTask):
     * **Target**: original photo with the correct object.
     * **Sketch**: sketch of the correct object.
     """
+    
+    # Categories that can be used as replacement objects (look natural on most backgrounds)
+    # Excluded: water animals, flying vehicles, location-specific buildings, environment-specific animals
+    REPLACEMENT_CATEGORIES = {
+        # Furniture & household items (natural indoors/outdoors)
+        "bench": True,
+        "chair": True,
+        "couch": True,
+        "table": True,
+        
+        # Common animals (pets/small animals that can be in various settings)
+        "cat": True,
+        "dog": True,
+        "rabbit": True,
+        "mouse": True,
+        "squirrel": True,
+        "hedgehog": True,
+        "teddy": True,  # teddy bear
+        
+        # Food items (can be placed anywhere)
+        "apple": True,
+        "banana": True,
+        "bread": True,
+        "hamburger": True,
+        "hotdog": True,
+        "pear": True,
+        "pineapple": True,
+        "pizza": True,
+        "pretzel": True,
+        "strawberry": True,
+        
+        # Common objects (portable, everyday items)
+        "cup": True,
+        "eyeglasses": True,
+        "hat": True,
+        "shoe": True,
+        "umbrella": True,
+        "wine": True,  # wine bottle/glass
+        "candle": True,
+        "flower": True,
+        "hourglass": True,
+        "jack-o-lantern": True,
+        "mushroom": True,
+        "spoon": True,
+        "teapot": True,
+        "bell": True,
+        
+        # Musical instruments (can be placed in various settings)
+        "guitar": True,
+        "harp": True,
+        "piano": True,
+        "saxophone": True,
+        "trumpet": True,
+        "violin": True,
+        
+        # Tools (common, portable)
+        "axe": True,
+        "hammer": True,
+        "knife": True,
+        "saw": True,
+        "scissors": True,
+        
+        # Small vehicles/objects
+        "bicycle": True,
+        "motorcycle": True,
+        "car": True,
+        "pickup": True,
+        
+        # Insects/small creatures (can appear in various environments)
+        "ant": True,
+        "bee": True,
+        "beetle": True,
+        "butterfly": True,
+        "snail": True,
+        "spider": True,
+        
+        # Birds (can appear in various settings)
+        "chicken": True,
+        "duck": True,
+        "owl": True,
+        "parrot": True,
+        "penguin": True,
+        "seagull": True,
+        "songbird": True,
+        "swan": True,
+        
+        # Other portable/common items
+        "alarm": True,  # alarm clock
+        "door": True,
+        "fan": True,
+        "wheelchair": True,
+        "window": True,
+        "racket": True,  # tennis racket
+        
+        # Weapons (historically common)
+        "pistol": True,
+        "rifle": True,
+        "sword": True,
+        "cannon": True,
+        
+        # Exclude water-specific animals
+        "crab": False,
+        "crocodilian": False,
+        "dolphin": False,
+        "fish": False,
+        "frog": False,
+        "jellyfish": False,
+        "lobster": False,
+        "ray": False,
+        "seal": False,
+        "sea": False,  # sea turtle
+        "shark": False,
+        "starfish": False,
+        "turtle": False,
+        "wading": False,  # wading bird
+        
+        # Exclude flying vehicles
+        "airplane": False,
+        "blimp": False,
+        "helicopter": False,
+        "hot-air": False,  # hot air balloon
+        "rocket": False,
+        "sailboat": False,
+        
+        # Exclude location-specific
+        "cabin": False,
+        "castle": False,
+        "church": False,
+        "geyser": False,
+        "skyscraper": False,
+        "tank": False,
+        "tree": False,
+        "volcano": False,
+        "windmill": False,
+        
+        # Exclude large/environment-specific animals
+        "ape": False,
+        "bear": False,
+        "camel": False,
+        "cow": False,
+        "deer": False,
+        "elephant": False,
+        "giraffe": False,
+        "hermit": False,  # hermit crab
+        "horse": False,
+        "kangaroo": False,
+        "lion": False,
+        "lizard": False,
+        "pig": False,
+        "raccoon": False,
+        "rhinoceros": False,
+        "scorpion": False,
+        "sheep": False,
+        "snake": False,
+        "tiger": False,
+        "zebra": False,
+        
+        # Exclude misc
+        "armor": False,
+        "bat": False,  # animal, not baseball bat
+    }
 
     def __init__(
         self, 
@@ -71,21 +232,37 @@ class ObjectReplacementTask(EditingTask):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Build class -> sample_ids mapping, then pair each sample with a
-        # random sample from a *different* class.
+        # random sample from a *different* class (restricted to suitable replacement categories).
         class_to_sids: dict[str, list[str]] = defaultdict(list)
         for sid, info in seg_results.items():
             class_to_sids[info["class"]].append(sid)
 
         rng = random.Random(self._seed)
         all_classes = sorted(class_to_sids)
+        
+        # Filter to only use categories marked as suitable for replacement
+        valid_replacement_classes = [
+            c for c in all_classes 
+            if self.REPLACEMENT_CATEGORIES.get(c, False)  # Default to False if not in list
+        ]
+        
+        if not valid_replacement_classes:
+            logger.warning("No valid replacement categories found!")
+            return {}
+        
+        logger.info(f"Using {len(valid_replacement_classes)} categories as replacement objects "
+                   f"(out of {len(all_classes)} total categories)")
 
         pairings: dict[str, str] = {}
         for sid in sample_ids:
             if sid not in seg_results:
                 continue
             target_cls = seg_results[sid]["class"]
-            other = [c for c in all_classes if c != target_cls]
+            
+            # Only use valid replacement classes that are different from target
+            other = [c for c in valid_replacement_classes if c != target_cls]
             if not other:
+                logger.warning(f"No suitable replacement for {target_cls}, skipping {sid}")
                 continue
             repl_cls = rng.choice(other)
             pairings[sid] = rng.choice(class_to_sids[repl_cls])
