@@ -1,5 +1,11 @@
 {
     "files.watcherExclude": {
         "**/dataset/**": true
-    }
+    },
+    "python.analysis.exclude": [
+        "**/dataset/**"
+    ],
+    "cursorpyright.analysis.exclude": [
+        "**/dataset/**"
+    ]
 }
