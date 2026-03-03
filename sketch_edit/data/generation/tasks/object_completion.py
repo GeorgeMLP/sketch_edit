@@ -94,11 +94,13 @@ class ObjectCompletionTask(EditingTask):
         results: dict[str, dict] = {}
         for sid in tqdm(sample_ids, desc="object_completion"):
             input_path = output_dir / sid / "input.jpg"
+            mask_path = output_dir / sid / "mask.png"
 
             # fast-path: reuse existing
-            if skip_existing and input_path.exists() and sid in seg_results:
+            if skip_existing and input_path.exists() and mask_path.exists() and sid in seg_results:
                 results[sid] = {
                     "input_path": str(input_path),
+                    "mask_path": str(mask_path),
                     "instruction": self._instruction(seg_results[sid]["class"]),
                 }
                 continue
@@ -140,12 +142,14 @@ class ObjectCompletionTask(EditingTask):
                 mask_bool = dilated_mask > 0
                 result[mask_bool] = background[mask_bool]
 
-                # Save results
+                # Save input image and partial mask (white=masked, black=background)
                 input_path.parent.mkdir(parents=True, exist_ok=True)
                 Image.fromarray(result).save(input_path)
+                Image.fromarray(dilated_mask * 255).save(mask_path)
 
                 results[sid] = {
                     "input_path": str(input_path),
+                    "mask_path": str(mask_path),
                     "instruction": self._instruction(seg_info["class"]),
                     "granularity": float(granularity),
                 }
