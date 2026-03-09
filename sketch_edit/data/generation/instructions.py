@@ -15,15 +15,14 @@ from sketch_edit.utils import get_logger, load_json, load_text_lines, save_text_
 logger = get_logger(__name__)
 
 INSTRUCTION_PROMPT_TEMPLATE = (
-    "We are building a dataset for image editing. Given a pair of images "
-    "(a source image and a target image), please generate a detailed natural "
-    "language instruction that describes how to edit the first image to "
-    "transform it into the second image.\n\n"
-    "Task context: {task_context}\n\n"
-    "Given this context, please generate a specific instruction that describes "
-    "how to edit the first image to match the second image. Generate the "
-    "instruction on one line and do not output anything other than the instruction.\n\n"
-    "The source and target images are given as follows:\n"
+    "You are annotating an image editing dataset. "
+    "You are given two images: the image to be edited (first) and the desired result (second).\n\n"
+    "Editing operation: {task_context}\n\n"
+    "Using both images to understand exactly what changed and where, write one specific "
+    "editing instruction describing what to do to the first image (e.g. location, appearance, orientation). "
+    "Write it as a direct command. Do NOT mention the second image or use words like "
+    "\"target\", \"source\", \"match\", or \"reference image\". "
+    "Output only the instruction, nothing else.\n"
 )
 
 
