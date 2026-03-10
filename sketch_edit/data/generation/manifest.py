@@ -41,61 +41,29 @@ def assign_splits(
     return splits
 
 
-def create_dataset_manifest(
-    data_dir: str | Path,
-    output_file: str | Path,
-    task_names: list[str] | None = None,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
-    seed: int = 42,
-    validate: bool = True,
-) -> dict:
-    """Build a multi-task, split-aware manifest and write it to *output_file*.
+def _build_entries(
+    data_dir: Path,
+    splits: dict[str, list[str]],
+    task_names: list[str],
+    seg_results: dict,
+    validate: bool,
+    max_sketches: int | None = None,
+) -> dict[str, list[dict]]:
+    """Build the train/val/test entry lists for a manifest.
 
-    Directory layout assumed::
-
-        data_dir/
-            sampled/{id}/*_photo.jpg, *_sketch.png
-            segmentation/segmentation_results.json
-            generated/{task}/{id}/input.jpg
-            generated/{task}/metadata.json
-            instructions/{task}/{id}.txt      (optional VLM instructions)
-
-    Returns the manifest dict ``{"metadata": …, "train": […], "val": […], "test": […]}``.
+    Args:
+        data_dir: Root dataset directory.
+        splits: ``{"train": [...], "val": [...], "test": [...]}`` sample ID lists.
+        task_names: Tasks to include.
+        seg_results: Segmentation results keyed by sample ID.
+        validate: Skip entries whose input file does not exist on disk.
+        max_sketches: Cap the number of sketches included per sample per task.
+            ``None`` means include all sketches (default behaviour).
     """
-    data_dir = Path(data_dir)
     sampled_dir = data_dir / "sampled"
     generated_dir = data_dir / "generated"
-    seg_results_path = data_dir / "segmentation" / "segmentation_results.json"
 
-    seg_results = load_json(seg_results_path) if seg_results_path.exists() else {}
-
-    # Auto-discover tasks when not specified
-    if task_names is None:
-        task_names = (
-            sorted(d.name for d in generated_dir.iterdir() if d.is_dir())
-            if generated_dir.exists()
-            else []
-        )
-    logger.info(f"Tasks: {task_names}")
-
-    # All sample IDs
-    sample_ids = sorted(d.name for d in sampled_dir.iterdir() if d.is_dir())
-
-    # Assign splits and persist
-    splits = assign_splits(sample_ids, train_ratio, val_ratio, seed)
-    save_json(splits, data_dir / "splits.json")
-
-    manifest: dict = {
-        "metadata": {
-            "num_samples": len(sample_ids),
-            "tasks": task_names,
-            "splits": {k: len(v) for k, v in splits.items()},
-        },
-        "train": [],
-        "val": [],
-        "test": [],
-    }
+    entries: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
 
     for task_name in task_names:
         task_meta_path = generated_dir / task_name / "metadata.json"
@@ -130,8 +98,9 @@ def create_dataset_manifest(
 
                 class_name = seg_results.get(sid, {}).get("class", "")
 
-                for sk_idx, sketch_path in enumerate(sketch_files):
-                    manifest[split_name].append({
+                selected = sketch_files if max_sketches is None else sketch_files[:max_sketches]
+                for sk_idx, sketch_path in enumerate(selected):
+                    entries[split_name].append({
                         "id": f"{sid}_{task_name}_{sk_idx}",
                         "sample_id": sid,
                         "task": task_name,
@@ -142,11 +111,100 @@ def create_dataset_manifest(
                         "edit_text": instruction,
                     })
 
-    total = sum(len(manifest[s]) for s in ("train", "val", "test"))
-    logger.info(f"Manifest: {total} entries across {len(task_names)} tasks")
-    for s in ("train", "val", "test"):
-        logger.info(f"  {s}: {len(manifest[s])}")
+    return entries
 
+
+def _save_manifest(
+    entries: dict[str, list[dict]],
+    sample_ids: list[str],
+    task_names: list[str],
+    splits: dict[str, list[str]],
+    output_file: Path,
+    label: str = "",
+) -> dict:
+    """Wrap entries in metadata, save to disk, and return the manifest dict."""
+    manifest = {
+        "metadata": {
+            "num_samples": len(sample_ids),
+            "tasks": task_names,
+            "splits": {k: len(v) for k, v in splits.items()},
+        },
+        **entries,
+    }
+    total = sum(len(entries[s]) for s in ("train", "val", "test"))
+    tag = f" [{label}]" if label else ""
+    logger.info(f"Manifest{tag}: {total} entries across {len(task_names)} tasks")
+    for s in ("train", "val", "test"):
+        logger.info(f"  {s}: {len(entries[s])}")
     save_json(manifest, output_file)
     logger.info(f"Manifest saved to {output_file}")
+    return manifest
+
+
+def create_dataset_manifest(
+    data_dir: str | Path,
+    output_file: str | Path,
+    task_names: list[str] | None = None,
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
+    validate: bool = True,
+    subset_sketches: int = 2,
+) -> dict:
+    """Build a multi-task, split-aware manifest and write it to *output_file*.
+
+    Also writes ``dataset_subset.json`` alongside *output_file*, capped at
+    *subset_sketches* sketches per sample per task.
+
+    Directory layout assumed::
+
+        data_dir/
+            sampled/{id}/*_photo.jpg, *_sketch.png
+            segmentation/segmentation_results.json
+            generated/{task}/{id}/input.jpg
+            generated/{task}/metadata.json
+            instructions/{task}/{id}.txt      (optional VLM instructions)
+
+    Returns the full manifest dict ``{"metadata": …, "train": […], "val": […], "test": […]}``.
+    """
+    data_dir = Path(data_dir)
+    output_file = Path(output_file)
+    sampled_dir = data_dir / "sampled"
+    generated_dir = data_dir / "generated"
+    seg_results_path = data_dir / "segmentation" / "segmentation_results.json"
+
+    seg_results = load_json(seg_results_path) if seg_results_path.exists() else {}
+
+    # Auto-discover tasks when not specified
+    if task_names is None:
+        task_names = (
+            sorted(d.name for d in generated_dir.iterdir() if d.is_dir())
+            if generated_dir.exists()
+            else []
+        )
+    logger.info(f"Tasks: {task_names}")
+
+    # All sample IDs — assign splits once and persist
+    sample_ids = sorted(d.name for d in sampled_dir.iterdir() if d.is_dir())
+    splits = assign_splits(sample_ids, train_ratio, val_ratio, seed)
+    save_json(splits, data_dir / "splits.json")
+
+    common = dict(
+        data_dir=data_dir,
+        splits=splits,
+        task_names=task_names,
+        seg_results=seg_results,
+        validate=validate,
+    )
+
+    # Full manifest (all sketches)
+    full_entries = _build_entries(**common, max_sketches=None)
+    manifest = _save_manifest(full_entries, sample_ids, task_names, splits, output_file, label="full")
+
+    # Subset manifest (first N sketches per sample)
+    subset_file = output_file.with_name(output_file.stem + "_subset" + output_file.suffix)
+    subset_entries = _build_entries(**common, max_sketches=subset_sketches)
+    _save_manifest(subset_entries, sample_ids, task_names, splits, subset_file,
+                   label=f"subset ≤{subset_sketches} sketches")
+
     return manifest
