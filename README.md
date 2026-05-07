@@ -1,6 +1,6 @@
 # Sketch-Guided Image Editing
 
-A modular pipeline for multi-task synthetic dataset generation, model training, and evaluation for image editing guided by language and sketch.
+A modular pipeline for multi-task synthetic dataset generation, model training, and evaluation for image editing guided by language and sketch. Paper link: https://arxiv.org/abs/2605.01135.
 
 ## Overview
 
@@ -242,3 +242,16 @@ To add a new editing task:
 | `controlnet_inpaint` | SD Inpaint + ControlNet Scribble | ✅ Implemented |
 | `bagel` | ByteDance BAGEL unified multimodal model | 🔜 Planned |
 | `t2i_adapter` | T2I-Adapter for controllable generation | 🔜 Planned |
+
+## Citation
+
+If you use this code or findings in your research, please cite:
+
+```bibtex
+@article{ji2026scribbleedit,
+    title={{ScribbleEdit: Synthetic Data for Image Editing with Scribbles and Text}},
+    author={Ji, Anya and Ma, George and Wright, T{\'e}a and Zhang, Yiming and Chan, David M. and Suhr, Alane and Sojoudi, Somayeh},
+    journal={arXiv preprint arXiv:2605.01135},
+    year={2026}
+}
+```
