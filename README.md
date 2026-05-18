@@ -1,4 +1,4 @@
-# Sketch-Guided Image Editing
+# ScribbleEdit: Synthetic Data for Image Editing with Scribbles and Text
 
 A modular pipeline for multi-task synthetic dataset generation, model training, and evaluation for image editing guided by language and sketch. Paper link: https://arxiv.org/abs/2605.01135.
 
