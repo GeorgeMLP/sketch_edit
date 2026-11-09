@@ -55,6 +55,8 @@ python scripts/wandb_sync.py \
     --artifact_name dataset:latest
 ```
 
+For public access, our dataset is released here: https://drive.google.com/file/d/1MLkBWadIWOtm9ksF3GqrbnQqEt3wOQ5t/view?usp=share_link.
+
 ## Quick Start
 
 ### 1. Generate Multi-Task Dataset
